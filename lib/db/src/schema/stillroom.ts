@@ -122,6 +122,20 @@ export const reposts = pgTable(
   ],
 );
 
+export const postDrafts = pgTable(
+  "stillroom_post_drafts",
+  {
+    key: text("key").primaryKey(),
+    authorId: text("author_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+    boardId: uuid("board_id").notNull().references(() => artistBoards.id, { onDelete: "cascade" }),
+    postId: uuid("post_id").references(() => posts.id, { onDelete: "cascade" }),
+    content: text("content").notNull().default(""),
+    mediaAssetId: uuid("media_asset_id").references(() => mediaAssets.id, { onDelete: "set null" }),
+    updatedAt: updatedAt(),
+  },
+  (table) => [index("stillroom_post_drafts_author_idx").on(table.authorId)],
+);
+
 export const comments = pgTable(
   "stillroom_comments",
   {

@@ -67,6 +67,16 @@ export class ObjectStorageService {
     return file;
   }
 
+  async finalizeVerifiedUpload(file: File, generation: string): Promise<string> {
+    const finalPath = `${this.getPrivateObjectDir()}/assets/${randomUUID()}`;
+    const { bucketName, objectName } = parseObjectPath(finalPath);
+    const destination = objectStorageClient.bucket(bucketName).file(objectName);
+    const verifiedSource = file.bucket.file(file.name, { generation });
+    await verifiedSource.copy(destination, { preconditionOpts: { ifGenerationMatch: 0 } });
+    await verifiedSource.delete({ ignoreNotFound: true });
+    return this.normalizeObjectEntityPath(finalPath);
+  }
+
   normalizeObjectEntityPath(rawPath: string): string {
     const privateDir = this.getPrivateObjectDir().replace(/\/$/, "");
     if (!rawPath.startsWith(`${privateDir}/`)) return rawPath;

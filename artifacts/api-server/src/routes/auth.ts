@@ -92,10 +92,8 @@ router.post("/auth/profile", async (req, res): Promise<void> => {
       .returning();
     res.status(201).json({ profile: presentProfile(profile) });
   } catch (error) {
-    const code =
-      typeof error === "object" && error !== null && "code" in error
-        ? String(error.code)
-        : "";
+    const dbError = error as { code?: string; cause?: { code?: string } };
+    const code = dbError?.code || dbError?.cause?.code || "";
     if (code === "23505") {
       res.status(409).json({ error: "That username is already in use." });
       return;

@@ -16,6 +16,7 @@
     "vite": "catalog:"
   },
   "dependencies": {
-    "@clerk/clerk-js": "^6.42.1"
+    "@clerk/clerk-js": "^6.42.1",
+    "@clerk/shared": "^4.43.1"
   }
 }

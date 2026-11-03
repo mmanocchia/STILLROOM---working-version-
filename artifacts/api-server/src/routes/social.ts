@@ -9,6 +9,7 @@ import {
   follows,
   mediaAssets,
   posts,
+  postDrafts as savedPostDrafts,
   profiles,
   reposts,
   shelfPosts,
@@ -37,10 +38,6 @@ function currentUserId(req: Request): string | null {
   return getAuth(req).userId ?? null;
 }
 
-function millis(value: Date | null | undefined): number | null {
-  return value ? value.getTime() : null;
-}
-
 function mediaUrl(id: string | null | undefined): string {
   return id ? `/api/media/${encodeURIComponent(id)}` : "";
 }
@@ -62,7 +59,7 @@ async function requireProfile(userId: string | null, role?: "Fan" | "Artist") {
   return profile;
 }
 
-async function requireOwnedMedia(assetId: string | null, ownerId: string) {
+async function requireOwnedMedia(assetId: string | null, ownerId: string, imageOnly = false) {
   if (!assetId) return null;
   const [asset] = await db
     .select()
@@ -70,6 +67,9 @@ async function requireOwnedMedia(assetId: string | null, ownerId: string) {
     .where(and(eq(mediaAssets.id, assetId), eq(mediaAssets.ownerId, ownerId), eq(mediaAssets.status, "ready")))
     .limit(1);
   if (!asset) throw new HttpError(400, "That upload is unavailable.");
+  if (imageOnly && !["image/jpeg", "image/png", "image/webp"].includes(asset.contentType)) {
+    throw new HttpError(400, "Choose a PNG, JPG, or WebP profile image.");
+  }
   return asset;
 }
 
@@ -103,6 +103,9 @@ async function getBootstrap(userId: string | null) {
     : [];
   const followed = userId
     ? await db.select().from(follows).where(eq(follows.fanId, userId))
+    : [];
+  const draftRows = userId
+    ? await db.select().from(savedPostDrafts).where(eq(savedPostDrafts.authorId, userId))
     : [];
 
   const presentedProfiles = profileRows.map((profile) => ({
@@ -140,7 +143,7 @@ async function getBootstrap(userId: string | null) {
       authorUsername: accountById.get(post.authorId)?.username || "",
       content: post.content,
       media: asset
-        ? { assetId: asset.id, url: mediaUrl(asset.id), name: asset.name, type: asset.contentType, size: asset.size }
+        ? { assetId: asset.id, url: mediaUrl(asset.id), name: asset.name, type: asset.contentType.startsWith("video/") ? "video" : "image", contentType: asset.contentType, size: asset.size }
         : null,
       publishedAt: post.publishedAt.getTime(),
       updatedAt: post.updatedAt.getTime(),
@@ -190,6 +193,23 @@ async function getBootstrap(userId: string | null) {
       ? { [userId]: followed.map((entry) => entry.artistId) }
       : {},
     shelves: presentedShelves,
+    postDrafts: Object.fromEntries(draftRows.map((draft) => {
+      const asset = draft.mediaAssetId ? mediaById.get(draft.mediaAssetId) : null;
+      return [draft.key, {
+        authorId: draft.authorId,
+        boardId: draft.boardId,
+        postId: draft.postId,
+        content: draft.content,
+        media: asset ? {
+          assetId: asset.id,
+          url: mediaUrl(asset.id),
+          type: asset.contentType.startsWith("video/") ? "video" : "image",
+          name: asset.name,
+          size: asset.size,
+          isNew: false,
+        } : null,
+      }];
+    })),
   };
 }
 
@@ -218,7 +238,7 @@ router.post("/social/actions", async (req, res): Promise<void> => {
           interests: z.string().trim().max(200).default(""),
           profileImageAssetId: z.string().uuid().nullable().default(null),
         }).parse(payload);
-        await requireOwnedMedia(body.profileImageAssetId, profile.id);
+        await requireOwnedMedia(body.profileImageAssetId, profile.id, true);
         await db.update(profiles).set({
           displayName: body.name,
           biography: body.biography,
@@ -246,7 +266,7 @@ router.post("/social/actions", async (req, res): Promise<void> => {
           biography: z.string().trim().min(1).max(2000),
           profileImageAssetId: z.string().uuid().nullable().default(null),
         }).parse(payload);
-        await requireOwnedMedia(body.profileImageAssetId, profile.id);
+        await requireOwnedMedia(body.profileImageAssetId, profile.id, true);
         const [existing] = await db.select().from(artistBoards).where(eq(artistBoards.ownerId, profile.id)).limit(1);
         if (existing) {
           await db.update(artistBoards).set({
@@ -290,6 +310,37 @@ router.post("/social/actions", async (req, res): Promise<void> => {
         } else {
           await db.insert(posts).values({ boardId: board.id, authorId: profile.id, content: body.content.trim(), mediaAssetId: body.mediaAssetId });
         }
+        await db.delete(savedPostDrafts).where(eq(savedPostDrafts.key, `${profile.id}::${board.id}::${body.postId || "new"}`));
+        break;
+      }
+      case "draft.save":
+      case "draft.delete": {
+        await requireProfile(userId, "Fan");
+        const body = z.object({
+          boardId: z.string().uuid(),
+          postId: z.string().uuid().nullable().default(null),
+          content: z.string().max(2000).default(""),
+          mediaAssetId: z.string().uuid().nullable().default(null),
+        }).parse(payload);
+        const key = `${profile.id}::${body.boardId}::${body.postId || "new"}`;
+        if (parsed.data.action === "draft.delete") {
+          await db.delete(savedPostDrafts).where(and(eq(savedPostDrafts.key, key), eq(savedPostDrafts.authorId, profile.id)));
+          break;
+        }
+        const [board] = await db.select({ id: artistBoards.id }).from(artistBoards).where(eq(artistBoards.id, body.boardId)).limit(1);
+        if (!board) throw new HttpError(404, "Artist board not found.");
+        if (body.postId) {
+          const [ownedPost] = await db.select({ id: posts.id }).from(posts).where(and(eq(posts.id, body.postId), eq(posts.authorId, profile.id), eq(posts.boardId, board.id))).limit(1);
+          if (!ownedPost) throw new HttpError(403, "You can only edit your own posts.");
+        }
+        await requireOwnedMedia(body.mediaAssetId, profile.id);
+        await db.insert(savedPostDrafts).values({
+          key, authorId: profile.id, boardId: body.boardId, postId: body.postId,
+          content: body.content, mediaAssetId: body.mediaAssetId,
+        }).onConflictDoUpdate({
+          target: savedPostDrafts.key,
+          set: { content: body.content, mediaAssetId: body.mediaAssetId, updatedAt: new Date() },
+        });
         break;
       }
       case "post.delete": {
@@ -414,10 +465,8 @@ router.post("/social/actions", async (req, res): Promise<void> => {
       res.status(error.status).json({ error: error.message });
       return;
     }
-    const code =
-      typeof error === "object" && error !== null && "code" in error
-        ? String(error.code)
-        : "";
+    const dbError = error as { code?: string; cause?: { code?: string } };
+    const code = dbError?.code || dbError?.cause?.code || "";
     if (code === "23505") {
       res.status(409).json({ error: "That item already exists." });
       return;

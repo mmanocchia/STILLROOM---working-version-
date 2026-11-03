@@ -1,1 +1,1 @@
-- [Stillroom prototype scope](stillroom-prototype-scope.md) — Keep the app vanilla and memory-only; do not seed demo content or add server persistence without a user request.
+- [Stillroom scope](stillroom-scope.md) — Real Clerk/PostgreSQL/storage is approved; preserve the vanilla client, privacy rules, and truthful empty content.

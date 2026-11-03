@@ -117,8 +117,10 @@ router.post("/storage/uploads/complete", async (req, res): Promise<void> => {
       res.status(400).json({ error: "Uploaded file metadata did not match the request." });
       return;
     }
+    if (!metadata.generation) throw new Error("Storage returned no object generation.");
+    const immutablePath = await storage.finalizeVerifiedUpload(file, String(metadata.generation));
     const [readyAsset] = await db.update(mediaAssets)
-      .set({ status: "ready" })
+      .set({ status: "ready", objectPath: immutablePath })
       .where(and(eq(mediaAssets.id, asset.id), eq(mediaAssets.ownerId, ownerId)))
       .returning();
     res.json({ assetId: readyAsset.id, mediaUrl: `/api/media/${readyAsset.id}` });
@@ -166,12 +168,38 @@ router.get("/media/:assetId", async (req, res): Promise<void> => {
 
   try {
     const file = await storage.getObjectEntityFile(asset.objectPath);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("Cache-Control", isPublic ? "public, max-age=3600" : "private, no-store");
+    const range = req.get("range");
+    if (range) {
+      const parsedRange = /^bytes=(\d*)-(\d*)$/.exec(range);
+      let start = parsedRange?.[1] ? Number(parsedRange[1]) : 0;
+      let end = parsedRange?.[2] ? Number(parsedRange[2]) : asset.size - 1;
+      if (parsedRange && !parsedRange[1] && parsedRange[2]) {
+        start = Math.max(0, asset.size - Number(parsedRange[2]));
+        end = asset.size - 1;
+      }
+      end = Math.min(end, asset.size - 1);
+      if (!parsedRange || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start > end || start >= asset.size) {
+        res.status(416).setHeader("Content-Range", `bytes */${asset.size}`);
+        res.end();
+        return;
+      }
+      res.status(206);
+      res.setHeader("Content-Type", asset.contentType);
+      res.setHeader("Content-Range", `bytes ${start}-${end}/${asset.size}`);
+      res.setHeader("Content-Length", String(end - start + 1));
+      file.createReadStream({ start, end }).on("error", () => res.destroy()).pipe(res);
+      return;
+    }
     const response = await storage.downloadObject(file);
     res.status(response.status);
     response.headers.forEach((value, key) => res.setHeader(key, value));
     res.setHeader("Cache-Control", isPublic ? "public, max-age=3600" : "private, no-store");
     if (response.body) {
-      Readable.fromWeb(response.body as ReadableStream<Uint8Array>).pipe(res);
+      Readable.fromWeb(response.body as ReadableStream<Uint8Array>)
+        .on("error", () => res.destroy()).pipe(res);
     } else {
       res.end();
     }

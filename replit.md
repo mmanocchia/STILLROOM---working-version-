@@ -1,45 +1,56 @@
-# [Project name]
+# Stillroom
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+An art-focused social platform, with a preserved vanilla JavaScript single-page client and a persistent multi-user foundation.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+Use the existing managed artifact workflows; they inject the correct ports and preview paths:
+- `artifacts/art-social: web` — Vite frontend.
+- `artifacts/api-server: API Server` — Express API, built with esbuild.
+- The mockup sandbox is separate from the production application.
 
-## Stack
+Validation commands:
+- `pnpm --filter @workspace/api-spec run codegen` — regenerate OpenAPI client/types/Zod schemas and typecheck shared libraries.
+- `pnpm --filter @workspace/api-server run typecheck`
+- `pnpm --filter @workspace/art-social run typecheck`
+- `pnpm --filter @workspace/db run push` — apply schema changes to development only.
+- `pnpm --filter @workspace/art-social run build` — requires the artifact's `PORT` and `BASE_PATH` build environment.
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+## Stack & Source Map
 
-## Where things live
+- Client: Vite, vanilla HTML/CSS/JavaScript in `artifacts/art-social/src`.
+- `main.js` owns existing routing, rendering, and transient editor state.
+- `api.js` owns same-origin API requests and the upload handshake.
+- `clerk.js` owns managed Clerk initialization and themed UI.
+- Server: Express 5/TypeScript in `artifacts/api-server/src`.
+- `routes/auth.ts` handles authenticated profile onboarding.
+- `routes/social.ts` handles authorized data snapshots and social mutations.
+- `routes/media.ts` handles upload authorization, verification, and media streaming.
+- Database: managed PostgreSQL + Drizzle; source schema is `lib/db/src/schema/stillroom.ts`.
+- API contract: `lib/api-spec/openapi.yaml`; generated files must not be hand-edited.
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+## Data & Security Boundaries
 
-## Architecture decisions
+Clerk verifies identity; the server maps its subject ID to a Stillroom profile. PostgreSQL stores role, profile, board, post, private draft, follow, Shelf, comment, repost, and media-reference records. Client arrays are rendering caches, not the source of truth.
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+All mutations require a verified session. The server independently checks stored role and ownership. Reposts and Shelf items reference original posts; foreign keys cascade dependent records when originals are deleted. Bootstrap exposes public content plus only the signed-in member's private follows, Shelves, and saved drafts.
 
-## Product
+Files upload directly to private App Storage with short-lived signed URLs. The server validates the uploaded object's ownership, size, and declared content type, then copies the verified generation to a separate immutable object. Media is served by asset ID, never by a client-supplied storage path. Video byte-range requests are supported. Unreferenced uploads are visible only to their owner.
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+Do not read or print secret values. Clerk/storage configuration is managed by Replit. Passwords never pass through the application API.
 
-## User preferences
+## Clerk / Routing Notes
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+The root/Feed remains public. New authenticated identities complete Stillroom profile onboarding before account-specific actions.
 
-## Gotchas
+Account switching is a genuine sign-out/sign-in, not selecting another public profile. A token refresh must not reset an in-progress editor.
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+Clerk's vanilla SDK requires its official UI bundle in addition to the session SDK. Keep the host-derived publishable key and automatically supplied proxy environment wiring compatible with managed production domains. Do not add production-only client gates or hardcode a deployment domain.
 
-## Pointers
+## Before Production Release
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+Development schema changes do not mean production has been published. Confirm production configuration through Replit's publishing flow.
+
+Run authenticated cross-account tests with approved disposable test identities: refresh persistence, Fan-only publishing, owner-only edits, private Shelves/drafts, account switching, and real device uploads. Remove test data afterward. Guest navigation/auth-form checks do not prove those protected journeys.
+
+Further hardening should cover request/upload rate limits, content inspection, stale-upload cleanup, feed pagination, and account-deletion lifecycle handling.

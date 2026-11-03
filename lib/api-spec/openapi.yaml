@@ -11,6 +11,148 @@ tags:
   - name: health
     description: Health operations
 paths:
+  /auth/user:
+    get:
+      operationId: getCurrentUser
+      summary: Get the verified Clerk identity and optional Stillroom profile
+      responses:
+        "200":
+          description: Current session
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [userId, profile]
+                properties:
+                  userId: { type: [string, "null"] }
+                  profile:
+                    oneOf:
+                      - $ref: "#/components/schemas/StillroomProfile"
+                      - type: "null"
+  /auth/profile:
+    post:
+      operationId: createStillroomProfile
+      summary: Complete onboarding for the authenticated Clerk identity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileOnboardingInput"
+      responses:
+        "201":
+          description: Profile created without any seeded content
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [profile]
+                properties:
+                  profile: { $ref: "#/components/schemas/StillroomProfile" }
+        "401": { $ref: "#/components/responses/ApiFailure" }
+        "409": { $ref: "#/components/responses/ApiFailure" }
+  /social/bootstrap:
+    get:
+      operationId: getStillroomBootstrap
+      summary: Read public content and only the current member's private data
+      responses:
+        "200":
+          description: Social data snapshot, never containing another member's private Shelves, follows, or drafts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StillroomBootstrap" }
+  /social/actions:
+    post:
+      operationId: runStillroomAction
+      summary: Perform an authenticated role- and ownership-checked social action
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SocialActionInput"
+      responses:
+        "200":
+          description: Updated authorized snapshot
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StillroomBootstrap" }
+        "400": { $ref: "#/components/responses/ApiFailure" }
+        "401": { $ref: "#/components/responses/ApiFailure" }
+        "403": { $ref: "#/components/responses/ApiFailure" }
+        "404": { $ref: "#/components/responses/ApiFailure" }
+        "409": { $ref: "#/components/responses/ApiFailure" }
+  /storage/uploads/request-url:
+    post:
+      operationId: requestStillroomUpload
+      summary: Request a short-lived private upload URL for an authenticated member
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadRequestInput"
+      responses:
+        "201":
+          description: Upload target; the file remains unavailable until verified
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [assetId, uploadURL, mediaUrl]
+                properties:
+                  assetId: { type: string, format: uuid }
+                  uploadURL: { type: string }
+                  mediaUrl: { type: string }
+        "401": { $ref: "#/components/responses/ApiFailure" }
+        "403": { $ref: "#/components/responses/ApiFailure" }
+  /storage/uploads/complete:
+    post:
+      operationId: completeStillroomUpload
+      summary: Verify ownership, size, and content type and finalize an immutable media asset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadCompleteInput"
+      responses:
+        "200":
+          description: Verified private asset reference
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [assetId, mediaUrl]
+                properties:
+                  assetId: { type: string, format: uuid }
+                  mediaUrl: { type: string }
+        "401": { $ref: "#/components/responses/ApiFailure" }
+        "404": { $ref: "#/components/responses/ApiFailure" }
+  /media/{assetId}:
+    get:
+      operationId: getStillroomMedia
+      summary: Stream media referenced by public content, or an owner's private upload
+      parameters:
+        - in: path
+          name: assetId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: header
+          name: Range
+          schema: { type: string }
+      responses:
+        "200":
+          description: Authorized media bytes
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "206":
+          description: Authorized video/media byte range
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/ApiFailure" }
   /healthz:
     get:
       operationId: healthCheck
@@ -25,7 +167,97 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
 components:
+  responses:
+    ApiFailure:
+      description: Request rejected or unavailable
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error: { type: string }
   schemas:
+    ProfileOnboardingInput:
+      type: object
+      required: [role, name, username]
+      properties:
+        role: { type: string, enum: [Fan, Artist] }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        username: { type: string, minLength: 1, maxLength: 32 }
+    SocialActionInput:
+      type: object
+      required: [action, payload]
+      properties:
+        action:
+          type: string
+          enum: [profile.update, profile.username, board.save, follow.toggle, post.save, post.delete, draft.save, draft.delete, comment.save, comment.delete, repost.toggle, shelf.save, shelf.delete, shelf.addPost, shelf.removePost, shelf.setPosts]
+        payload:
+          type: object
+          additionalProperties: true
+          description: Action-specific fields are validated by the server using Zod. Caller identity and roles are never accepted from this payload.
+    UploadRequestInput:
+      type: object
+      required: [name, size, contentType, purpose]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        size: { type: integer, minimum: 1, maximum: 26214400 }
+        contentType: { type: string }
+        purpose: { type: string, enum: [profile, board, post] }
+    UploadCompleteInput:
+      type: object
+      required: [assetId]
+      properties:
+        assetId: { type: string, format: uuid }
+    StillroomProfile:
+      type: object
+      required: [id, role, name, username, biography, interests, profileImage, createdAt]
+      properties:
+        id: { type: string }
+        role: { type: string, enum: [Fan, Artist] }
+        name: { type: string }
+        username: { type: string }
+        biography: { type: string }
+        interests: { type: string }
+        profileImage: { type: string }
+        profileImageAssetId: { type: [string, "null"] }
+        createdAt: { type: number }
+    SocialRecord:
+      type: object
+      additionalProperties: true
+      description: Existing vanilla SPA record shape, containing IDs and display fields but no credentials or storage object paths.
+    StillroomBootstrap:
+      type: object
+      required: [userId, profileId, accounts, boards, posts, comments, reposts, shelves, followedArtistsByFan, postDrafts]
+      properties:
+        userId: { type: [string, "null"] }
+        profileId: { type: [string, "null"] }
+        accounts:
+          type: array
+          items: { $ref: "#/components/schemas/StillroomProfile" }
+        boards:
+          type: array
+          items: { $ref: "#/components/schemas/SocialRecord" }
+        posts:
+          type: array
+          items: { $ref: "#/components/schemas/SocialRecord" }
+        comments:
+          type: array
+          items: { $ref: "#/components/schemas/SocialRecord" }
+        reposts:
+          type: array
+          items: { $ref: "#/components/schemas/SocialRecord" }
+        shelves:
+          type: array
+          items: { $ref: "#/components/schemas/SocialRecord" }
+        followedArtistsByFan:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+        postDrafts:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/SocialRecord" }
     HealthStatus:
       type: object
       properties:

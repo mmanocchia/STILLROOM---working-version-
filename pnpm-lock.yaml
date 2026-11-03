@@ -248,6 +248,9 @@ importers:
       '@clerk/clerk-js':
         specifier: ^6.42.1
         version: 6.42.1(@types/react@19.3.0)(typescript@5.9.3)(zod@4.6.5)
+      '@clerk/shared':
+        specifier: ^4.43.1
+        version: 4.43.1
     devDependencies:
       '@replit/vite-plugin-cartographer':
         specifier: 'catalog:'

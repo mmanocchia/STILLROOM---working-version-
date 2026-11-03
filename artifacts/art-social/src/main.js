@@ -1,5 +1,5 @@
 import './index.css';
-import { apiRequest, createProfile, getBootstrap, runAction, uploadFile } from './api.js';
+import { createProfile, getBootstrap, runAction, uploadFile } from './api.js';
 import { clerk, clerkAppearance, loadClerk } from './clerk.js';
 
 const app = document.querySelector('#app');
@@ -116,6 +116,7 @@ const state = {
 
 let authWidget = null;
 let syncInFlight = null;
+let observedClerkSession = undefined;
 
 const iconPaths = {
   home: '<path d="m3 10 9-7 9 7"/><path d="M5 9v12h14V9M9 21v-7h6v7"/>',
@@ -159,6 +160,9 @@ function hrefFor(path) {
 }
 
 function applyBootstrap(data) {
+  const localDrafts = data.profileId && state.activeAccountId === data.profileId
+    ? state.postDrafts
+    : {};
   state.authUserId = data.userId || null;
   state.accounts = data.accounts || [];
   state.boards = data.boards || [];
@@ -167,6 +171,7 @@ function applyBootstrap(data) {
   state.reposts = data.reposts || [];
   state.shelves = data.shelves || [];
   state.followedArtistsByFan = data.followedArtistsByFan || {};
+  state.postDrafts = { ...(data.postDrafts || {}), ...localDrafts };
   state.activeAccountId = data.profileId || null;
   state.dataLoading = false;
   state.dataError = '';
@@ -187,6 +192,7 @@ function mountAuthWidget(type, id) {
   if (!clerk || !clerk.loaded) return;
   const node = document.getElementById(id);
   if (!node) return;
+  node.replaceChildren();
   if (type === 'sign-up') {
     clerk.mountSignUp(node, {
       appearance: clerkAppearance,
@@ -250,8 +256,12 @@ async function startStillroom() {
   render();
   try {
     await loadClerk();
-    clerk.addListener(() => {
-      void syncSession();
+    clerk.addListener(({ session }) => {
+      const sessionId = session?.id || null;
+      if (observedClerkSession !== sessionId) {
+        observedClerkSession = sessionId;
+        void syncSession();
+      }
     });
     await syncSession();
   } catch (error) {
@@ -538,8 +548,9 @@ function renderRegistration() {
             ${renderRoleOption('Artist', 'Artist', 'Make a board for people to gather around your work.')}
           </div>
         </fieldset>
+        ${state.dataError ? `<p class="inline-error" role="alert">${escapeHTML(state.dataError)}</p>` : ''}
         ${role
-          ? `<p class="form-note">You’re joining as a ${escapeHTML(role)}. After confirming your sign-in details, you’ll set your name and username.</p><div id="clerk-sign-up" class="clerk-auth-container" aria-live="polite"></div>`
+          ? `<p class="form-note">You’re joining as a ${escapeHTML(role)}. After confirming your sign-in details, you’ll set your name and username.</p><div id="clerk-sign-up" class="clerk-auth-container" aria-live="polite"><p class="field-hint">Loading secure sign-up…</p></div>`
           : `<p class="form-note">Choose an account type to continue. Sign-up uses secure Clerk authentication.</p>`}
       </section>
     </main>
@@ -557,7 +568,8 @@ function renderLogin() {
       </section>
       <section class="registration-card" aria-labelledby="login-title">
         <p class="eyebrow">Your account</p><h2 id="login-title">Sign in</h2>
-        <div id="clerk-sign-in" class="clerk-auth-container" aria-live="polite"></div>
+        ${state.dataError ? `<p class="inline-error" role="alert">${escapeHTML(state.dataError)}</p>` : ''}
+        <div id="clerk-sign-in" class="clerk-auth-container" aria-live="polite"><p class="field-hint">Loading secure sign-in…</p></div>
       </section>
     </main>
   </div>`;
@@ -869,7 +881,7 @@ function renderPostCard(post) {
     ${post.content ? `<p class="post-content">${escapeHTML(post.content)}</p>` : ''}
     ${renderPostMedia(post.media, post.authorUsername)}
     ${shelfStatus}
-    ${ownsPost && editDraft ? `<div class="post-draft-inline"><span>Unpublished edits saved in this tab.</span><div><button class="text-button" type="button" data-action="resume-post-draft" data-board-id="${escapeHTML(board.id)}" data-post-id="${escapeHTML(post.id)}">Resume editing</button><button class="text-button text-danger" type="button" data-action="discard-saved-post-draft" data-board-id="${escapeHTML(board.id)}" data-post-id="${escapeHTML(post.id)}">Discard draft</button></div></div>` : ''}
+    ${ownsPost && editDraft ? `<div class="post-draft-inline"><span>Unpublished edits available.</span><div><button class="text-button" type="button" data-action="resume-post-draft" data-board-id="${escapeHTML(board.id)}" data-post-id="${escapeHTML(post.id)}">Resume editing</button><button class="text-button text-danger" type="button" data-action="discard-saved-post-draft" data-board-id="${escapeHTML(board.id)}" data-post-id="${escapeHTML(post.id)}">Discard draft</button></div></div>` : ''}
     <div class="post-actions">
       <button class="text-button shelf-save-button" type="button" data-action="open-shelf-picker" data-post-id="${escapeHTML(post.id)}" ${state.shelfLoading ? 'disabled' : ''}>${icon('bookmark', 13)} Add to Shelf</button>
       ${account?.role === 'Fan' ? `<button class="text-button repost-button" type="button" data-action="toggle-repost" data-post-id="${escapeHTML(post.id)}" ${state.repostPending ? 'disabled' : ''}>${icon('repost', 13)} ${ownRepost ? 'Undo repost' : 'Repost'}</button>` : ''}
@@ -898,7 +910,7 @@ function renderFeedItem(item) {
 function renderPostForm(board, editor, draft) {
   const editing = Boolean(editor.postId);
   const error = state.postErrors[editor.key] || '';
-  const disabled = state.postPublishing ? 'disabled' : '';
+  const disabled = state.postPublishing || state.postMediaLoading ? 'disabled' : '';
   const mediaPreview = draft.media
     ? `<div class="post-draft-media">${renderPostMedia(draft.media, activeAccount()?.username || '')}<div class="post-draft-media-info"><span>${draft.media.type === 'image' ? 'Image' : 'Video'} attached${draft.media.name ? ` · ${escapeHTML(draft.media.name)}` : ''}</span><button class="text-button text-danger" type="button" data-action="remove-post-media" ${disabled}>Remove media</button></div></div>`
     : '';
@@ -908,6 +920,7 @@ function renderPostForm(board, editor, draft) {
       <label class="field-label">Your post<textarea class="field-input field-textarea post-textarea" name="postContent" rows="5" maxlength="2000" placeholder="Share something with this artist’s community" aria-invalid="${Boolean(error)}" data-post-content ${disabled}>${escapeHTML(draft.content)}</textarea></label>
       ${error ? `<p class="inline-error" data-post-error role="alert">${escapeHTML(error)}</p>` : ''}
       <label class="field-label post-upload-label">Add an image or video <span class="optional-label">(optional)</span><input class="file-input" type="file" data-post-media accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm" ${disabled}><span class="field-hint">Images up to 10 MB; MP4 or WebM videos up to 25 MB.</span></label>
+      ${state.postMediaLoading ? '<p class="field-hint" role="status">Uploading media securely…</p>' : ''}
       ${mediaPreview}
       <div class="post-form-actions">
         <button class="primary-button" type="submit" ${disabled}>${state.postPublishing ? `<span class="registration-loading"><span class="loading-dot"></span>${editing ? 'Saving…' : 'Publishing…'}</span>` : `${editing ? 'Save changes' : 'Publish post'} ${icon('arrow', 14)}`}</button>
@@ -931,7 +944,7 @@ function renderBoardComposer(board) {
   }
   const draft = state.postDrafts[postDraftKey(account.id, board.id)];
   if (draft) {
-    return `<div class="saved-post-draft"><div><p class="draft-label">Draft</p><p class="draft-copy">${draft.content ? escapeHTML(draft.content.slice(0, 140)) : draft.media ? `${draft.media.type === 'image' ? 'Image' : 'Video'} attached` : 'An empty draft saved in this tab'}</p></div><button class="quiet-button" type="button" data-action="resume-post-draft" data-board-id="${escapeHTML(board.id)}">Continue draft ${icon('arrow', 14)}</button><button class="text-button text-danger" type="button" data-action="discard-saved-post-draft" data-board-id="${escapeHTML(board.id)}">Discard</button></div>`;
+    return `<div class="saved-post-draft"><div><p class="draft-label">Draft</p><p class="draft-copy">${draft.content ? escapeHTML(draft.content.slice(0, 140)) : draft.media ? `${draft.media.type === 'image' ? 'Image' : 'Video'} attached` : 'An empty draft'}</p></div><button class="quiet-button" type="button" data-action="resume-post-draft" data-board-id="${escapeHTML(board.id)}">Continue draft ${icon('arrow', 14)}</button><button class="text-button text-danger" type="button" data-action="discard-saved-post-draft" data-board-id="${escapeHTML(board.id)}">Discard</button></div>`;
   }
   return `<div class="post-create-trigger"><button class="primary-button" type="button" data-action="start-post" data-board-id="${escapeHTML(board.id)}">${icon('plus', 15)} Write a post</button></div>`;
 }
@@ -964,7 +977,7 @@ function renderExplorePost(post) {
 }
 
 function renderExploreError() {
-  return `<div class="explore-feedback explore-error" role="alert"><p class="explore-feedback-title">Explore couldn’t load these results.</p><p class="explore-feedback-copy">Your in-memory content is still here. Try again or reset your search.</p><button class="quiet-button" type="button" data-action="retry-explore">Try again</button><button class="text-button" type="button" data-action="reset-explore">Reset search and filters</button></div>`;
+  return `<div class="explore-feedback explore-error" role="alert"><p class="explore-feedback-title">Explore couldn’t load these results.</p><p class="explore-feedback-copy">Your saved content has not changed. Try again or reset your search.</p><button class="quiet-button" type="button" data-action="retry-explore">Try again</button><button class="text-button" type="button" data-action="reset-explore">Reset search and filters</button></div>`;
 }
 
 function renderExploreResults() {
@@ -1616,12 +1629,10 @@ function renderArtistProfileContent(profile, isOwner) {
 }
 
 function renderProfileSwitcher(account) {
-  const switcher = state.accounts.map((entry) => renderAccountChoice(entry, entry.id === account.id, true)).join('');
   return `<section class="switcher-section" aria-labelledby="switcher-title">
-    <div class="switcher-heading"><h2 class="switcher-title" id="switcher-title">Accounts in this tab</h2><span class="switcher-caption">Switch between registered accounts</span></div>
-    <div class="switcher-list">${switcher}</div>
-    <div class="switcher-footer"><button class="outline-button" type="button" data-action="add-account" ${state.usernameLoading ? 'disabled' : ''}>${icon('plus', 15)} Register another account</button></div>
-    <p class="form-note">Accounts are held in page memory only. They disappear when you refresh.</p>
+    <div class="switcher-heading"><h2 class="switcher-title" id="switcher-title">Your account</h2><span class="switcher-caption">@${escapeHTML(account.username)} · ${escapeHTML(account.role)}</span></div>
+    <div class="switcher-footer"><button class="outline-button" type="button" data-action="switch-account" ${state.usernameLoading ? 'disabled' : ''}>Sign in to a different account</button></div>
+    <p class="form-note">Switching accounts signs you out first. Your boards, posts, and collections are saved.</p>
   </section>`;
 }
 
@@ -2191,7 +2202,7 @@ function startPostComposer(boardId, postId = null) {
 async function toggleArtistFollow(boardId) {
   const account = activeAccount();
   const board = state.boards.find((entry) => entry.id === boardId);
-  if (account?.role !== 'Fan' || !board) return;
+  if (account?.role !== 'Fan' || !board || state.followStatus?.pending) return;
 
   const current = followedArtistIds(account.id);
   const following = current.includes(board.ownerId);
@@ -2401,13 +2412,50 @@ async function confirmRepost(postId) {
   }
 }
 
-function discardPostDraft(authorId, boardId, postId = null) {
+async function saveCurrentPostDraft() {
+  const editor = state.postEditor;
+  const account = activeAccount();
+  const draft = editor && state.postDrafts[editor.key];
+  if (!editor || !draft || account?.role !== 'Fan' || editor.authorId !== account.id || state.postMediaLoading) return;
+  state.postPublishing = true;
+  render();
+  try {
+    await persistAction('draft.save', {
+      boardId: editor.boardId,
+      postId: editor.postId || null,
+      content: draft.content || '',
+      mediaAssetId: draft.media?.assetId || null,
+    });
+    state.postEditor = null;
+    state.postErrors[editor.key] = '';
+    state.postStatus = { boardId: editor.boardId, userId: account.id, message: 'Draft saved.' };
+  } catch (error) {
+    state.postErrors[editor.key] = error.message || 'Your draft could not be saved.';
+  } finally {
+    state.postPublishing = false;
+    render();
+  }
+}
+
+async function discardPostDraft(authorId, boardId, postId = null) {
   const key = postDraftKey(authorId, boardId, postId);
   const draft = state.postDrafts[key];
-  releaseDraftMedia(draft);
-  delete state.postDrafts[key];
-  delete state.postErrors[key];
-  if (state.postEditor?.key === key) state.postEditor = null;
+  if (state.postPublishing) return;
+  state.postPublishing = true;
+  render();
+  try {
+    await persistAction('draft.delete', { boardId, postId });
+    releaseDraftMedia(draft);
+    delete state.postDrafts[key];
+    delete state.postErrors[key];
+    if (state.postEditor?.key === key) state.postEditor = null;
+    state.postStatus = { boardId, userId: authorId, message: 'Draft discarded.' };
+  } catch (error) {
+    state.postErrors[key] = error.message || 'Your draft could not be discarded.';
+  } finally {
+    state.postPublishing = false;
+    render();
+  }
 }
 
 async function deletePost(postId) {
@@ -2476,6 +2524,7 @@ async function submitPost(form) {
   const content = String(formData.get('postContent') || '');
   const errors = {};
 
+  if (state.postMediaLoading || draft.media?.uploading) errors.form = 'Wait for your media to finish uploading.';
   if (postId && (!existing || existing.authorId !== account.id)) errors.form = 'You can only edit your own posts.';
   if (state.postErrors[key]) errors.form = state.postErrors[key];
   if (!errors.form && content.length > 2000) errors.form = 'Posts must be 2,000 characters or fewer.';
@@ -2869,11 +2918,16 @@ app?.addEventListener('click', (event) => {
     state.commentEditor = null;
     state.commentDeleteConfirmId = null;
     state.commentStatus = null;
-    state.activeAccountId = target.dataset.accountId;
+    state.activeAccountId = null;
     state.successAccountId = null;
     state.editingProfile = false;
-    state.route = '/profile';
-    navigate('/profile');
+    if (clerk) void clerk.signOut().then(async () => {
+      await syncSession();
+      navigate('/login');
+    }).catch((error) => {
+      state.dataError = error.message || 'Could not switch accounts.';
+      render();
+    });
   } else if (action === 'logout') {
     cancelProfileOperation();
     resetUsernameEditor();
@@ -2943,7 +2997,7 @@ app?.addEventListener('click', (event) => {
     cancelUsernameEdit();
   } else if (action === 'remove-profile-image') {
     if (state.editingProfile && !state.profileLoading && state.profileDraft) {
-      state.profileDraft = { ...state.profileDraft, profileImage: '' };
+      state.profileDraft = { ...state.profileDraft, profileImage: '', profileImageAssetId: null };
       state.profileImageError = '';
       state.profileImageToken += 1;
       state.profileImageLoading = false;
@@ -2963,7 +3017,10 @@ app?.addEventListener('click', (event) => {
     }
   } else if (action === 'add-account') {
     state.editingProfile = false;
-    beginRegistration(null);
+    if (clerk) void clerk.signOut().then(async () => {
+      await syncSession();
+      beginRegistration(null);
+    });
   } else if (action === 'create-shelf') {
     beginShelfForm('create');
   } else if (action === 'create-shelf-from-picker') {
@@ -3020,7 +3077,7 @@ app?.addEventListener('click', (event) => {
       navigate('/artists');
     }
   } else if (action === 'remove-board-image') {
-    state.boardDraft = { ...(state.boardDraft || {}), profileImage: '' };
+    state.boardDraft = { ...(state.boardDraft || {}), profileImage: '', profileImageAssetId: null };
     state.boardImageError = '';
     state.boardImageReadToken += 1;
     state.boardImageLoading = false;
@@ -3028,21 +3085,12 @@ app?.addEventListener('click', (event) => {
   } else if (action === 'start-post' || action === 'edit-post' || action === 'resume-post-draft') {
     startPostComposer(target.dataset.boardId, target.dataset.postId || null);
   } else if (action === 'save-post-draft') {
-    const editor = state.postEditor;
-    const account = activeAccount();
-    if (editor && account?.role === 'Fan' && editor.authorId === account.id) {
-      state.postErrors[editor.key] = '';
-      state.postEditor = null;
-      state.postStatus = { boardId: editor.boardId, userId: account.id, message: 'Draft saved in this tab.' };
-      render();
-    }
+    void saveCurrentPostDraft();
   } else if (action === 'discard-current-post-draft') {
     const editor = state.postEditor;
     const account = activeAccount();
     if (editor && account?.role === 'Fan' && editor.authorId === account.id) {
-      discardPostDraft(account.id, editor.boardId, editor.postId);
-      state.postStatus = { boardId: editor.boardId, userId: account.id, message: 'Draft discarded.' };
-      render();
+      void discardPostDraft(account.id, editor.boardId, editor.postId);
     }
   } else if (action === 'discard-saved-post-draft') {
     const account = activeAccount();
@@ -3050,9 +3098,7 @@ app?.addEventListener('click', (event) => {
     const postId = target.dataset.postId || null;
     const key = account?.role === 'Fan' && board ? postDraftKey(account.id, board.id, postId) : '';
     if (account?.role === 'Fan' && board && state.postDrafts[key]) {
-      discardPostDraft(account.id, board.id, postId);
-      state.postStatus = { boardId: board.id, userId: account.id, message: 'Draft discarded.' };
-      render();
+      void discardPostDraft(account.id, board.id, postId);
     }
   } else if (action === 'remove-post-media') {
     const editor = state.postEditor;
@@ -3060,6 +3106,8 @@ app?.addEventListener('click', (event) => {
     if (editor && draft && activeAccount()?.id === editor.authorId) {
       releaseDraftMedia(draft);
       state.postDrafts[editor.key] = { ...draft, media: null };
+      state.postMediaToken += 1;
+      state.postMediaLoading = false;
       state.postErrors[editor.key] = '';
       render();
     }
