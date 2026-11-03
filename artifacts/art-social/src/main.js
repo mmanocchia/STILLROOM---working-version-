@@ -25,6 +25,8 @@ const state = {
   route: getRoute(),
   authUserId: null,
   authLoading: true,
+  authActionLoading: false,
+  authNotice: null,
   dataLoading: true,
   dataError: '',
   profileSetupLoading: false,
@@ -117,6 +119,81 @@ const state = {
 let authWidget = null;
 let syncInFlight = null;
 let observedClerkSession = undefined;
+let authGeneration = 0;
+
+function clearAccountEditors() {
+  cancelProfileOperation();
+  resetUsernameEditor();
+  Object.values(state.postDrafts).forEach(releaseDraftMedia);
+  state.postDrafts = {};
+  state.followedArtistsByFan = {};
+  state.shelves = state.shelves.filter((shelf) => shelf.visibility === 'public');
+  state.profileDraft = null;
+  state.profileError = '';
+  state.profileFieldErrors = {};
+  state.profileImageToken += 1;
+  state.profileImageLoading = false;
+  state.boardDraft = null;
+  state.boardImageReadToken += 1;
+  state.boardImageLoading = false;
+  state.postMediaToken += 1;
+  state.postMediaLoading = false;
+  state.postEditor = null;
+  state.postErrors = {};
+  state.postStatus = null;
+  state.commentDrafts = {};
+  state.commentEditor = null;
+  state.commentStatus = null;
+  state.commentDeleteConfirmId = null;
+  state.repostConfirm = null;
+  state.repostStatus = null;
+  state.shelfPickerPostId = null;
+  state.shelfPickerSelection = [];
+  state.shelfPickerError = '';
+  state.shelfDraft = null;
+  state.shelfErrors = {};
+  state.shelfStatus = null;
+  state.shelfDeleteConfirmId = null;
+  state.profileSetupLoading = false;
+  state.profileSetupError = '';
+  state.draft = { role: null, name: '', username: '', email: '' };
+  state.errors = {};
+  state.successAccountId = null;
+  state.editingProfile = false;
+}
+
+function renderAuthNotice() {
+  const notice = state.authNotice;
+  return notice
+    ? `<p class="${notice.kind === 'error' ? 'inline-error' : 'field-hint'}" role="${notice.kind === 'error' ? 'alert' : 'status'}">${escapeHTML(notice.message)}</p>`
+    : '';
+}
+
+async function endSession(destination = '/home') {
+  if (!clerk || state.authActionLoading) return;
+  state.authActionLoading = true;
+  state.authNotice = null;
+  render();
+  try {
+    window.sessionStorage.setItem('stillroom.signedOut', '1');
+    await clerk.signOut({ redirectUrl: hrefFor(destination) });
+    window.sessionStorage.removeItem('stillroom.pendingRole');
+    state.pendingRole = null;
+    authGeneration += 1;
+    clearAccountEditors();
+    state.activeAccountId = null;
+    state.authUserId = null;
+    await syncSession();
+    state.authNotice = { kind: 'success', message: 'You’re signed out. Your saved content is safe.' };
+    navigate(destination);
+  } catch (error) {
+    window.sessionStorage.removeItem('stillroom.signedOut');
+    state.authNotice = { kind: 'error', message: error.message || 'Sign-out failed. Please try again.' };
+  } finally {
+    state.authActionLoading = false;
+    render();
+  }
+}
 
 const iconPaths = {
   home: '<path d="m3 10 9-7 9 7"/><path d="M5 9v12h14V9M9 21v-7h6v7"/>',
@@ -160,6 +237,7 @@ function hrefFor(path) {
 }
 
 function applyBootstrap(data) {
+  if (state.activeAccountId !== (data.profileId || null)) clearAccountEditors();
   const localDrafts = data.profileId && state.activeAccountId === data.profileId
     ? state.postDrafts
     : {};
@@ -211,12 +289,14 @@ function mountAuthWidget(type, id) {
 
 async function syncSession() {
   if (syncInFlight) return syncInFlight;
+  const generation = authGeneration;
   syncInFlight = (async () => {
     state.dataLoading = true;
     state.dataError = '';
     render();
     try {
       const data = await getBootstrap();
+      if (generation !== authGeneration) return;
       applyBootstrap(data);
       state.authLoading = false;
       if (data.userId && !data.profileId) {
@@ -234,6 +314,7 @@ async function syncSession() {
       }
       render();
     } catch (error) {
+      if (generation !== authGeneration) return;
       state.authLoading = false;
       state.dataLoading = false;
       state.dataError = error.message || 'Stillroom could not load right now.';
@@ -241,12 +322,15 @@ async function syncSession() {
     }
   })().finally(() => {
     syncInFlight = null;
+    if (generation !== authGeneration) void syncSession();
   });
   return syncInFlight;
 }
 
 async function persistAction(action, payload = {}) {
+  const generation = authGeneration;
   const data = await runAction(action, payload);
+  if (generation !== authGeneration) throw new Error('Your session changed. Please sign in and try again.');
   applyBootstrap(data);
   render();
   return data;
@@ -260,10 +344,21 @@ async function startStillroom() {
       const sessionId = session?.id || null;
       if (observedClerkSession !== sessionId) {
         observedClerkSession = sessionId;
+        authGeneration += 1;
+        state.authNotice = null;
+        if (sessionId) window.sessionStorage.removeItem('stillroom.signedOut');
+        clearAccountEditors();
+        state.authUserId = null;
+        state.activeAccountId = null;
         void syncSession();
       }
     });
     await syncSession();
+    if (!state.authUserId && !state.dataError && window.sessionStorage.getItem('stillroom.signedOut')) {
+      window.sessionStorage.removeItem('stillroom.signedOut');
+      state.authNotice = { kind: 'success', message: 'You’re signed out. Your saved content is safe.' };
+      render();
+    }
   } catch (error) {
     state.authLoading = false;
     state.dataLoading = false;
@@ -568,6 +663,7 @@ function renderLogin() {
       </section>
       <section class="registration-card" aria-labelledby="login-title">
         <p class="eyebrow">Your account</p><h2 id="login-title">Sign in</h2>
+        ${renderAuthNotice()}
         ${state.dataError ? `<p class="inline-error" role="alert">${escapeHTML(state.dataError)}</p>` : ''}
         <div id="clerk-sign-in" class="clerk-auth-container" aria-live="polite"><p class="field-hint">Loading secure sign-in…</p></div>
       </section>
@@ -578,7 +674,7 @@ function renderLogin() {
 function renderProfileSetup() {
   const role = state.pendingRole || state.draft.role;
   return `<div class="paper-grain landing-page page-enter">
-    ${header({ right: `<button class="text-button" type="button" data-action="logout">${icon('logout', 14)} Sign out</button>` })}
+    ${header({ right: `<button class="text-button" type="button" data-action="logout" ${state.authActionLoading ? 'disabled' : ''}>${icon('logout', 14)} ${state.authActionLoading ? 'Signing out…' : 'Sign out'}</button>` })}
     <main class="registration-layout">
       <section class="registration-intro">
         <p class="eyebrow">One last step</p>
@@ -587,6 +683,7 @@ function renderProfileSetup() {
       </section>
       <section class="registration-card" aria-labelledby="profile-setup-title">
         <p class="eyebrow">Your Stillroom identity</p><h2 id="profile-setup-title">Complete your profile</h2>
+        ${renderAuthNotice()}
         ${state.profileSetupError ? `<p class="form-error" role="alert">${escapeHTML(state.profileSetupError)}</p>` : ''}
         <form data-form="profile-setup" novalidate aria-busy="${state.profileSetupLoading}">
           <fieldset class="role-fieldset" style="border:0;padding:0;margin:0">
@@ -638,7 +735,7 @@ function renderShell(content, pageTitle) {
   const nav = navItems.map((item) => navLink(item, state.route)).join('');
   const searchControl = `<button class="icon-button" type="button" data-action="open-search" aria-label="Search artists, boards, and posts">${icon('search', 17)}<span class="search-label">Search</span></button>`;
   const accountControls = account
-    ? `<a class="icon-button profile-shortcut" href="${hrefFor('/profile')}" data-route="/profile" aria-label="Open profile">${icon('profile', 17)}<span class="account-handle">@${escapeHTML(account.username)}</span></a><button class="logout-button" type="button" data-action="logout" aria-label="Log out">${icon('logout', 15)}<span>Log out</span></button>`
+    ? `<a class="icon-button profile-shortcut" href="${hrefFor('/profile')}" data-route="/profile" aria-label="Open profile">${icon('profile', 17)}<span class="account-handle">@${escapeHTML(account.username)}</span></a><button class="logout-button" type="button" data-action="logout" aria-label="Log out" ${state.authActionLoading ? 'disabled' : ''}>${icon('logout', 15)}<span>${state.authActionLoading ? 'Signing out…' : 'Log out'}</span></button>`
     : `<div class="visitor-join-actions" aria-label="Join Stillroom">
         <a class="text-button signin-nav-button" href="${hrefFor('/login')}" data-route="/login">Sign in</a>
         <button class="primary-button join-nav-button" type="button" data-action="join" data-role="Fan">Join as a Fan</button>
@@ -652,7 +749,7 @@ function renderShell(content, pageTitle) {
     </header>
     <div class="app-main">
       <header class="topbar"><span class="topbar-title">${escapeHTML(pageTitle)}</span></header>
-      <main class="page-content page-enter">${content}</main>
+      <main class="page-content page-enter">${renderAuthNotice()}${content}</main>
     </div>
     ${renderShelfSignupPrompt()}
     ${renderShelfPicker()}
@@ -1631,7 +1728,7 @@ function renderArtistProfileContent(profile, isOwner) {
 function renderProfileSwitcher(account) {
   return `<section class="switcher-section" aria-labelledby="switcher-title">
     <div class="switcher-heading"><h2 class="switcher-title" id="switcher-title">Your account</h2><span class="switcher-caption">@${escapeHTML(account.username)} · ${escapeHTML(account.role)}</span></div>
-    <div class="switcher-footer"><button class="outline-button" type="button" data-action="switch-account" ${state.usernameLoading ? 'disabled' : ''}>Sign in to a different account</button></div>
+    <div class="switcher-footer"><button class="outline-button" type="button" data-action="switch-account" ${state.usernameLoading || state.authActionLoading ? 'disabled' : ''}>${state.authActionLoading ? 'Signing out…' : 'Sign in to a different account'}</button></div>
     <p class="form-note">Switching accounts signs you out first. Your boards, posts, and collections are saved.</p>
   </section>`;
 }
@@ -1778,7 +1875,7 @@ async function submitUsernameChange(form) {
   if (!account || !['Fan', 'Artist'].includes(account.role)
     || form.dataset.userId !== account.id || !state.usernameEditorOpen || state.usernameLoading) return;
 
-  const username = String(new FormData(form).get('newUsername') || '').trim().replace(/^@/, '');
+  const username = String(new FormData(form).get('newUsername') || '').trim().replace(/^@/, '').trim();
   let error = '';
   if (!username) error = 'Choose a username.';
   else if (state.accounts.some((entry) => entry.id !== account.id && entry.username.toLocaleLowerCase() === username.toLocaleLowerCase())) {
@@ -2054,7 +2151,7 @@ async function submitProfileSetup(form) {
   const formData = new FormData(form);
   const name = String(formData.get('name') || '').trim();
   const usernameInput = String(formData.get('username') || '').trim();
-  const username = usernameInput.replace(/^@/, '');
+  const username = usernameInput.replace(/^@/, '').trim();
   const errors = {};
   if (!state.draft.role || !['Fan', 'Artist'].includes(state.draft.role)) {
     errors.role = 'Choose whether you’re joining as a Fan or Artist.';
@@ -2078,10 +2175,12 @@ async function submitProfileSetup(form) {
   }
 
   state.profileSetupLoading = true;
+  const generation = authGeneration;
   render();
   try {
     const result = await createProfile({ role: state.draft.role, name, username });
     const data = await getBootstrap();
+    if (generation !== authGeneration) return;
     applyBootstrap(data);
     state.successAccountId = result.profile.id;
     state.pendingRole = null;
@@ -2896,69 +2995,9 @@ app?.addEventListener('click', (event) => {
     navigate(activeAccount() ? '/profile' : '/home');
   } else if (action === 'open-profile') navigate('/profile', { replace: true });
   else if (action === 'switch-account') {
-    cancelProfileOperation();
-    resetUsernameEditor();
-    state.profileDraft = null;
-    state.profileError = '';
-    state.profileFieldErrors = {};
-    state.profileImageToken += 1;
-    state.profileImageLoading = false;
-    state.profileImageError = '';
-    state.shelfPickerPostId = null;
-    state.shelfPickerSelection = [];
-    state.shelfPickerError = '';
-    state.shelfReturnPostId = null;
-    state.shelfReturnRoute = null;
-    state.shelfDraft = null;
-    state.shelfErrors = {};
-    state.shelfStatus = null;
-    state.shelfDeleteConfirmId = null;
-    state.repostConfirm = null;
-    state.repostStatus = null;
-    state.commentEditor = null;
-    state.commentDeleteConfirmId = null;
-    state.commentStatus = null;
-    state.activeAccountId = null;
-    state.successAccountId = null;
-    state.editingProfile = false;
-    if (clerk) void clerk.signOut().then(async () => {
-      await syncSession();
-      navigate('/login');
-    }).catch((error) => {
-      state.dataError = error.message || 'Could not switch accounts.';
-      render();
-    });
+    void endSession('/login');
   } else if (action === 'logout') {
-    cancelProfileOperation();
-    resetUsernameEditor();
-    state.profileDraft = null;
-    state.profileError = '';
-    state.profileFieldErrors = {};
-    state.profileImageToken += 1;
-    state.profileImageLoading = false;
-    state.profileImageError = '';
-    state.shelfPickerPostId = null;
-    state.shelfPickerSelection = [];
-    state.shelfPickerError = '';
-    state.shelfReturnPostId = null;
-    state.shelfReturnRoute = null;
-    state.shelfDraft = null;
-    state.shelfErrors = {};
-    state.shelfStatus = null;
-    state.shelfDeleteConfirmId = null;
-    state.repostConfirm = null;
-    state.repostStatus = null;
-    state.commentEditor = null;
-    state.commentDeleteConfirmId = null;
-    state.commentStatus = null;
-    state.activeAccountId = null;
-    state.successAccountId = null;
-    state.editingProfile = false;
-    navigate('/home');
-    if (clerk) void clerk.signOut().then(() => syncSession()).catch((error) => {
-      state.dataError = error.message || 'You could not be signed out.';
-      render();
-    });
+    void endSession('/home');
   } else if (action === 'retry-data') {
     void syncSession();
   } else if (action === 'home-tab') {
@@ -3017,10 +3056,7 @@ app?.addEventListener('click', (event) => {
     }
   } else if (action === 'add-account') {
     state.editingProfile = false;
-    if (clerk) void clerk.signOut().then(async () => {
-      await syncSession();
-      beginRegistration(null);
-    });
+    void endSession('/register');
   } else if (action === 'create-shelf') {
     beginShelfForm('create');
   } else if (action === 'create-shelf-from-picker') {

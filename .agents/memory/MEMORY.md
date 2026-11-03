@@ -1,1 +1,2 @@
 - [Stillroom scope](stillroom-scope.md) — Real Clerk/PostgreSQL/storage is approved; preserve the vanilla client, privacy rules, and truthful empty content.
+- [Clerk test identity cleanup](clerk-test-identities.md) — Requested test-login claims are not verified provider account details; verify provenance before provider-user deletion.

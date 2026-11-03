@@ -2,15 +2,9 @@ import { getAuth } from "@clerk/express";
 import { db, profiles } from "@workspace/db";
 import { Router, type IRouter, type Request } from "express";
 import { eq } from "drizzle-orm";
-import { z } from "zod";
+import { createProfileSchema } from "../lib/profileValidation";
 
 const router: IRouter = Router();
-
-const createProfileSchema = z.object({
-  role: z.enum(["Fan", "Artist"]),
-  name: z.string().trim().min(1).max(100),
-  username: z.string().trim().min(1).max(32),
-});
 
 function currentUserId(req: Request): string | null {
   return getAuth(req).userId ?? null;
@@ -62,12 +56,8 @@ router.post("/auth/profile", async (req, res): Promise<void> => {
   }
 
   const name = parsed.data.name;
-  const username = parsed.data.username.replace(/^@/, "");
-  const usernameKey = username.toLocaleLowerCase();
-  if (!username || username.length > 32) {
-    res.status(400).json({ error: "Choose a valid username." });
-    return;
-  }
+  const username = parsed.data.username;
+  const usernameKey = username.toLowerCase();
 
   const [existingProfile] = await db
     .select({ id: profiles.id })

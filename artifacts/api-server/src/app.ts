@@ -12,6 +12,8 @@ import {
 } from "./middlewares/clerkProxyMiddleware";
 
 const app: Express = express();
+// Session-dependent JSON must never be reused between signed-in identities.
+app.disable("etag");
 
 app.use(
   pinoHttp({
@@ -46,6 +48,7 @@ app.use(
 );
 
 app.use("/api", (req, res, next) => {
+  res.setHeader("Cache-Control", "private, no-store");
   if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
     const origin = req.get("origin");
     if (origin) {

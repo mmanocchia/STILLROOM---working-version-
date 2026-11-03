@@ -2,6 +2,7 @@ import { getAuth } from "@clerk/express";
 import { and, asc, desc, eq, inArray, or } from "drizzle-orm";
 import { Router, type IRouter, type Request } from "express";
 import { z } from "zod";
+import { changeUsernameSchema } from "../lib/profileValidation";
 import {
   artistBoards,
   comments,
@@ -237,7 +238,7 @@ router.post("/social/actions", async (req, res): Promise<void> => {
           biography: z.string().trim().max(1000).default(""),
           interests: z.string().trim().max(200).default(""),
           profileImageAssetId: z.string().uuid().nullable().default(null),
-        }).parse(payload);
+        }).strict().parse(payload);
         await requireOwnedMedia(body.profileImageAssetId, profile.id, true);
         await db.update(profiles).set({
           displayName: body.name,
@@ -249,10 +250,8 @@ router.post("/social/actions", async (req, res): Promise<void> => {
         break;
       }
       case "profile.username": {
-        const body = z.object({ username: z.string().trim().min(1).max(32) }).parse(payload);
-        const username = body.username.replace(/^@/, "");
-        if (!username) throw new HttpError(400, "Choose a username.");
-        const usernameKey = username.toLocaleLowerCase();
+        const { username } = changeUsernameSchema.parse(payload);
+        const usernameKey = username.toLowerCase();
         const [other] = await db.select({ id: profiles.id }).from(profiles).where(eq(profiles.usernameKey, usernameKey)).limit(1);
         if (other && other.id !== profile.id) throw new HttpError(409, "That username is already in use.");
         await db.update(profiles).set({ username, usernameKey, updatedAt: new Date() }).where(eq(profiles.id, profile.id));

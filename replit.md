@@ -45,6 +45,8 @@ The root/Feed remains public. New authenticated identities complete Stillroom pr
 
 Account switching is a genuine sign-out/sign-in, not selecting another public profile. A token refresh must not reset an in-progress editor.
 
+Session changes invalidate outstanding client mutations before their responses can rehydrate private data. Clear account-specific drafts/editors when identities change. Clerk sign-out can reload the document; its explicit redirect destination and one-time signed-out notice must survive that reload.
+
 Clerk's vanilla SDK requires its official UI bundle in addition to the session SDK. Keep the host-derived publishable key and automatically supplied proxy environment wiring compatible with managed production domains. Do not add production-only client gates or hardcode a deployment domain.
 
 ## Before Production Release
