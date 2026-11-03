@@ -1,4 +1,6 @@
 import './index.css';
+import { apiRequest, createProfile, getBootstrap, runAction, uploadFile } from './api.js';
+import { clerk, clerkAppearance, loadClerk } from './clerk.js';
 
 const app = document.querySelector('#app');
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
@@ -21,6 +23,12 @@ const state = {
   postDrafts: {},
   activeAccountId: null,
   route: getRoute(),
+  authUserId: null,
+  authLoading: true,
+  dataLoading: true,
+  dataError: '',
+  profileSetupLoading: false,
+  profileSetupError: '',
   pendingRole: null,
   draft: { role: null, name: '', username: '', email: '' },
   errors: {},
@@ -67,6 +75,9 @@ const state = {
   postEditor: null,
   postErrors: {},
   postPublishing: false,
+  postMediaLoading: false,
+  postMediaToken: 0,
+  postMediaError: '',
   pendingPost: null,
   postTimer: null,
   nextPostId: 1,
@@ -102,6 +113,9 @@ const state = {
   shelfSignupPromptOpen: false,
   shelfSignupPromptFocusKey: '',
 };
+
+let authWidget = null;
+let syncInFlight = null;
 
 const iconPaths = {
   home: '<path d="m3 10 9-7 9 7"/><path d="M5 9v12h14V9M9 21v-7h6v7"/>',
@@ -142,6 +156,110 @@ function getRoute() {
 
 function hrefFor(path) {
   return `${basePath}${path === '/' ? '/' : path}`;
+}
+
+function applyBootstrap(data) {
+  state.authUserId = data.userId || null;
+  state.accounts = data.accounts || [];
+  state.boards = data.boards || [];
+  state.posts = data.posts || [];
+  state.comments = data.comments || [];
+  state.reposts = data.reposts || [];
+  state.shelves = data.shelves || [];
+  state.followedArtistsByFan = data.followedArtistsByFan || {};
+  state.activeAccountId = data.profileId || null;
+  state.dataLoading = false;
+  state.dataError = '';
+}
+
+function unmountAuthWidget() {
+  if (!clerk || !authWidget) return;
+  try {
+    if (authWidget.type === 'sign-up') clerk.unmountSignUp(authWidget.node);
+    else clerk.unmountSignIn(authWidget.node);
+  } catch {
+    // The Clerk component may already have been detached during navigation.
+  }
+  authWidget = null;
+}
+
+function mountAuthWidget(type, id) {
+  if (!clerk || !clerk.loaded) return;
+  const node = document.getElementById(id);
+  if (!node) return;
+  if (type === 'sign-up') {
+    clerk.mountSignUp(node, {
+      appearance: clerkAppearance,
+      signInUrl: hrefFor('/login'),
+      forceRedirectUrl: hrefFor('/profile/setup'),
+    });
+  } else {
+    clerk.mountSignIn(node, {
+      appearance: clerkAppearance,
+      signUpUrl: hrefFor('/register'),
+      forceRedirectUrl: hrefFor('/home'),
+    });
+  }
+  authWidget = { type, node };
+}
+
+async function syncSession() {
+  if (syncInFlight) return syncInFlight;
+  syncInFlight = (async () => {
+    state.dataLoading = true;
+    state.dataError = '';
+    render();
+    try {
+      const data = await getBootstrap();
+      applyBootstrap(data);
+      state.authLoading = false;
+      if (data.userId && !data.profileId) {
+        const role = window.sessionStorage.getItem('stillroom.pendingRole');
+        state.pendingRole = role === 'Fan' || role === 'Artist' ? role : null;
+        state.draft.role = state.pendingRole;
+        if (!['/profile/setup', '/confirmation'].includes(state.route)) {
+          navigate('/profile/setup', { replace: true });
+        }
+      } else if (data.profileId) {
+        window.sessionStorage.removeItem('stillroom.pendingRole');
+        if (['/register', '/login', '/profile/setup'].includes(state.route)) {
+          navigate('/home', { replace: true });
+        }
+      }
+      render();
+    } catch (error) {
+      state.authLoading = false;
+      state.dataLoading = false;
+      state.dataError = error.message || 'Stillroom could not load right now.';
+      render();
+    }
+  })().finally(() => {
+    syncInFlight = null;
+  });
+  return syncInFlight;
+}
+
+async function persistAction(action, payload = {}) {
+  const data = await runAction(action, payload);
+  applyBootstrap(data);
+  render();
+  return data;
+}
+
+async function startStillroom() {
+  render();
+  try {
+    await loadClerk();
+    clerk.addListener(() => {
+      void syncSession();
+    });
+    await syncSession();
+  } catch (error) {
+    state.authLoading = false;
+    state.dataLoading = false;
+    state.dataError = error.message || 'Sign-in is not available right now.';
+    render();
+  }
 }
 
 function navigate(path, { replace = false } = {}) {
@@ -360,9 +478,7 @@ function renderAccountChoice(account, current = false, profileLink = false) {
 }
 
 function renderWelcome() {
-  const accountPicker = state.accounts.length
-    ? `<section class="account-picker" aria-labelledby="account-picker-title"><p class="eyebrow">Already joined in this tab</p><h2 class="account-picker-title" id="account-picker-title">Switch to a demo account</h2><div class="account-list">${state.accounts.map((account) => renderAccountChoice(account)).join('')}</div><p class="form-note">Demo accounts are temporary and disappear when this page is refreshed.</p></section>`
-    : '';
+  const accountPicker = '';
   return `<div class="paper-grain landing-page page-enter">
     ${header()}
     <main class="welcome-layout">
@@ -404,38 +520,74 @@ function renderRoleOption(role, title, copy) {
 }
 
 function renderRegistration() {
-  if (state.loading) {
-    return `<div class="paper-grain landing-page page-enter">${header({ right: '<span class="eyebrow">Just a moment</span>' })}<main class="confirmation-layout"><section class="confirmation-card" aria-live="polite" aria-busy="true"><span class="eyebrow">Making a little room</span><h1 class="confirmation-title">Creating your account</h1><p class="confirmation-copy">Your Stillroom profile is almost ready.</p><div class="registration-loading"><span class="loading-dot"></span><span class="eyebrow">Please wait</span></div></section></main></div>`;
-  }
-
-  const draft = state.draft;
-  const roleError = errorFor('role');
-  const submitLabel = 'Create your account';
+  const role = state.pendingRole || state.draft.role;
   return `<div class="paper-grain landing-page page-enter">
-    ${header({ right: `<button class="text-button" type="button" data-action="back-from-register">${icon('back', 14)} Back</button>` })}
+    ${header({ right: `<button class="text-button" type="button" data-action="back-from-register">${icon('back', 14)} Back to Feed</button>` })}
     <main class="registration-layout">
       <section class="registration-intro">
         <p class="eyebrow">A place without applause</p>
         <h1 class="registration-title">Make room<br>for what <em>moves you.</em></h1>
-        <p class="registration-copy">Join as a fan or an artist. There are no audiences to build here, only rooms to make and work to care about.</p>
+        <p class="registration-copy">Create a Stillroom account to follow artists, contribute to boards, and keep the work that matters to you.</p>
       </section>
       <section class="registration-card" aria-labelledby="registration-title">
         <p class="eyebrow">Settle in</p><h2 id="registration-title">Create your account</h2>
-        <form data-form="registration" novalidate>
+        <fieldset class="role-fieldset" style="border:0;padding:0;margin:0">
+          <legend class="role-legend">I’m here as…</legend>
+          <div class="role-options">
+            ${renderRoleOption('Fan', 'Fan', 'Find artists and share your thoughts.')}
+            ${renderRoleOption('Artist', 'Artist', 'Make a board for people to gather around your work.')}
+          </div>
+        </fieldset>
+        ${role
+          ? `<p class="form-note">You’re joining as a ${escapeHTML(role)}. After confirming your sign-in details, you’ll set your name and username.</p><div id="clerk-sign-up" class="clerk-auth-container" aria-live="polite"></div>`
+          : `<p class="form-note">Choose an account type to continue. Sign-up uses secure Clerk authentication.</p>`}
+      </section>
+    </main>
+  </div>`;
+}
+
+function renderLogin() {
+  return `<div class="paper-grain landing-page page-enter">
+    ${header({ right: `<button class="text-button" type="button" data-action="back-from-register">${icon('back', 14)} Back to Feed</button>` })}
+    <main class="registration-layout">
+      <section class="registration-intro">
+        <p class="eyebrow">Welcome back</p>
+        <h1 class="registration-title">Return to<br>your <em>Stillroom.</em></h1>
+        <p class="registration-copy">Sign in to continue your collections and conversations.</p>
+      </section>
+      <section class="registration-card" aria-labelledby="login-title">
+        <p class="eyebrow">Your account</p><h2 id="login-title">Sign in</h2>
+        <div id="clerk-sign-in" class="clerk-auth-container" aria-live="polite"></div>
+      </section>
+    </main>
+  </div>`;
+}
+
+function renderProfileSetup() {
+  const role = state.pendingRole || state.draft.role;
+  return `<div class="paper-grain landing-page page-enter">
+    ${header({ right: `<button class="text-button" type="button" data-action="logout">${icon('logout', 14)} Sign out</button>` })}
+    <main class="registration-layout">
+      <section class="registration-intro">
+        <p class="eyebrow">One last step</p>
+        <h1 class="registration-title">Make your<br><em>profile.</em></h1>
+        <p class="registration-copy">Your account is secure. Add the details people will see around Stillroom.</p>
+      </section>
+      <section class="registration-card" aria-labelledby="profile-setup-title">
+        <p class="eyebrow">Your Stillroom identity</p><h2 id="profile-setup-title">Complete your profile</h2>
+        ${state.profileSetupError ? `<p class="form-error" role="alert">${escapeHTML(state.profileSetupError)}</p>` : ''}
+        <form data-form="profile-setup" novalidate aria-busy="${state.profileSetupLoading}">
           <fieldset class="role-fieldset" style="border:0;padding:0;margin:0">
-            <legend class="role-legend">I’m here as…</legend>
+            <legend class="role-legend">Account type</legend>
             <div class="role-options">
-              ${renderRoleOption('Fan', 'Fan', 'Find artists and share your thoughts.')}
-              ${renderRoleOption('Artist', 'Artist', 'Make boards for people to gather around your work.')}
+              ${renderRoleOption('Fan', 'Fan', 'Discover and contribute to artist boards.')}
+              ${renderRoleOption('Artist', 'Artist', 'Create your artist board.')}
             </div>
-            ${roleError}
+            ${errorFor('role')}
           </fieldset>
-          <label class="field-label">Name<input class="field-input" name="name" value="${escapeHTML(draft.name)}" autocomplete="name" placeholder="How should we call you?" aria-invalid="${Boolean(state.errors.name)}" ${state.errors.name ? 'aria-describedby="error-name"' : ''} required>${errorFor('name')}</label>
-          <label class="field-label">Username<input class="field-input" name="username" value="${escapeHTML(draft.username)}" autocomplete="username" placeholder="Your name, without the @" aria-invalid="${Boolean(state.errors.username)}" ${state.errors.username ? 'aria-describedby="error-username"' : ''} required>${errorFor('username')}</label>
-          <label class="field-label">Email<input class="field-input" name="email" value="${escapeHTML(draft.email)}" type="email" autocomplete="email" placeholder="you@example.com" aria-invalid="${Boolean(state.errors.email)}" ${state.errors.email ? 'aria-describedby="error-email"' : ''} required>${errorFor('email')}</label>
-          <label class="field-label">Password<input class="field-input" name="password" type="password" autocomplete="new-password" placeholder="At least 8 characters" aria-invalid="${Boolean(state.errors.password)}" ${state.errors.password ? 'aria-describedby="error-password"' : ''} required>${errorFor('password')}</label>
-          <p class="form-note">This is a local preview. Your account lives only in this open page and disappears on refresh.</p>
-          <button class="primary-button registration-submit" type="submit" data-testid="button-submit-registration">${submitLabel} ${icon('arrow', 15)}</button>
+          <label class="field-label">Name<input class="field-input" name="name" value="${escapeHTML(state.draft.name)}" autocomplete="name" placeholder="Your display name" aria-invalid="${Boolean(state.errors.name)}" ${state.errors.name ? 'aria-describedby="error-name"' : ''} required>${errorFor('name')}</label>
+          <label class="field-label">Username<input class="field-input" name="username" value="${escapeHTML(state.draft.username)}" autocomplete="username" placeholder="Choose a username" aria-invalid="${Boolean(state.errors.username)}" ${state.errors.username ? 'aria-describedby="error-username"' : ''} required>${errorFor('username')}</label>
+          <button class="primary-button registration-submit" type="submit" ${state.profileSetupLoading ? 'disabled' : ''}>${state.profileSetupLoading ? 'Saving profile…' : 'Finish setting up'} ${icon('arrow', 15)}</button>
         </form>
       </section>
     </main>
@@ -476,6 +628,7 @@ function renderShell(content, pageTitle) {
   const accountControls = account
     ? `<a class="icon-button profile-shortcut" href="${hrefFor('/profile')}" data-route="/profile" aria-label="Open profile">${icon('profile', 17)}<span class="account-handle">@${escapeHTML(account.username)}</span></a><button class="logout-button" type="button" data-action="logout" aria-label="Log out">${icon('logout', 15)}<span>Log out</span></button>`
     : `<div class="visitor-join-actions" aria-label="Join Stillroom">
+        <a class="text-button signin-nav-button" href="${hrefFor('/login')}" data-route="/login">Sign in</a>
         <button class="primary-button join-nav-button" type="button" data-action="join" data-role="Fan">Join as a Fan</button>
         <button class="outline-button join-nav-button join-nav-artist-button" type="button" data-action="join" data-role="Artist">Join as an Artist</button>
       </div>`;
@@ -500,8 +653,8 @@ function renderEmpty(title, copy = '') {
 
 function renderAccountGate(eyebrow, title, copy) {
   return `<section class="account-gate"><p class="eyebrow">${escapeHTML(eyebrow)}</p><h1 class="page-title">${escapeHTML(title)}</h1><p class="page-subtitle">${escapeHTML(copy)}</p>
-    ${renderEmpty('This space is ready for you.', 'Create a temporary Fan or Artist account to make it yours.')}
-    <div class="account-gate-actions"><button class="primary-button" type="button" data-action="join">Join / Sign Up ${icon('arrow', 14)}</button></div>
+    ${renderEmpty('This space is ready for you.', 'Sign in or create a Fan or Artist account to make it yours.')}
+    <div class="account-gate-actions"><button class="primary-button" type="button" data-action="join" data-role="Fan">Join as a Fan ${icon('arrow', 14)}</button><button class="outline-button" type="button" data-action="join" data-role="Artist">Join as an Artist</button><a class="quiet-button" href="${hrefFor('/login')}" data-route="/login">Sign in</a></div>
   </section>`;
 }
 
@@ -1141,7 +1294,7 @@ function beginShelfForm(mode, shelfId = null) {
   navigate(shelf ? `/shelves/${encodeURIComponent(shelf.id)}/edit` : '/shelves/new');
 }
 
-function submitShelfForm(form) {
+async function submitShelfForm(form) {
   const account = activeAccount();
   if (!account || state.shelfLoading) return;
   const mode = form.dataset.mode === 'edit' ? 'edit' : 'create';
@@ -1172,39 +1325,21 @@ function submitShelfForm(form) {
   state.shelfLoading = true;
   state.pendingShelf = { action: mode, shelfId, ownerId: account.id, values };
   render();
-  state.shelfTimer = window.setTimeout(() => {
-    const pending = state.pendingShelf;
-    if (!pending || activeAccount()?.id !== pending.ownerId) {
-      cancelShelfOperation();
-      render();
-      return;
-    }
-    let shelf;
-    if (pending.action === 'create') {
-      shelf = {
-        id: `shelf-${state.nextShelfId++}`,
-        ownerId: pending.ownerId,
-        ...pending.values,
-        postIds: [],
-      };
-      state.shelves.unshift(shelf);
-    } else {
-      shelf = state.shelves.find((entry) => entry.id === pending.shelfId && entry.ownerId === pending.ownerId);
-      if (!shelf) {
-        state.shelfErrors = { form: 'This Shelf could not be updated. Please try again.' };
-        state.shelfLoading = false;
-        state.shelfTimer = null;
-        state.pendingShelf = null;
-        render();
-        return;
-      }
-      Object.assign(shelf, pending.values);
-    }
-    const returnPostId = pending.action === 'create' ? state.shelfReturnPostId : null;
+  const previousShelfIds = new Set(state.shelves.map((shelf) => shelf.id));
+  try {
+    const data = await persistAction('shelf.save', {
+      shelfId: mode === 'edit' ? shelfId : null,
+      ...values,
+    });
+    const shelf = mode === 'edit'
+      ? data.shelves.find((entry) => entry.id === shelfId)
+      : data.shelves.find((entry) => entry.ownerId === account.id && !previousShelfIds.has(entry.id));
+    if (!shelf) throw new Error('Your Shelf could not be found after saving.');
+    const returnPostId = mode === 'create' ? state.shelfReturnPostId : null;
     state.shelfStatus = {
-      ownerId: pending.ownerId,
+      ownerId: account.id,
       shelfId: shelf.id,
-      message: pending.action === 'create' ? 'Shelf created.' : 'Shelf updated.',
+      message: mode === 'create' ? 'Shelf created.' : 'Shelf updated.',
     };
     state.shelfDraft = null;
     state.shelfErrors = {};
@@ -1215,7 +1350,13 @@ function submitShelfForm(form) {
     state.shelfReturnRoute = null;
     navigate(`/shelves/${encodeURIComponent(shelf.id)}`);
     if (returnPostId && state.posts.some((entry) => entry.id === returnPostId)) openShelfPicker(returnPostId, shelf.id);
-  }, 180);
+  } catch (error) {
+    state.shelfErrors = { form: error.message || 'This Shelf could not be saved. Please try again.' };
+    state.shelfLoading = false;
+    state.shelfTimer = null;
+    state.pendingShelf = null;
+    render();
+  }
 }
 
 function openShelfPicker(postId, preselectedShelfId = null) {
@@ -1231,7 +1372,7 @@ function openShelfPicker(postId, preselectedShelfId = null) {
   render();
 }
 
-function submitShelfPicker(form) {
+async function submitShelfPicker(form) {
   const account = activeAccount();
   const postId = form.dataset.postId;
   const post = state.posts.find((entry) => entry.id === postId && isVisibleFanPost(entry));
@@ -1258,27 +1399,12 @@ function submitShelfPicker(form) {
   state.shelfLoading = true;
   state.pendingShelf = { action: 'save-post', postId, ownerId: account.id, selectedIds };
   render();
-  state.shelfTimer = window.setTimeout(() => {
-    const pending = state.pendingShelf;
-    if (!pending || activeAccount()?.id !== pending.ownerId || !state.posts.some((entry) => entry.id === pending.postId)) {
-      cancelShelfOperation();
-      state.shelfPickerError = 'This post could not be saved. Please try again.';
-      render();
-      return;
-    }
-    const selected = new Set(pending.selectedIds);
-    state.shelves = state.shelves.map((shelf) => {
-      if (shelf.ownerId !== pending.ownerId) return shelf;
-      const alreadySaved = shelf.postIds.includes(pending.postId);
-      const shouldSave = selected.has(shelf.id);
-      if (shouldSave && !alreadySaved) return { ...shelf, postIds: [...shelf.postIds, pending.postId] };
-      if (!shouldSave && alreadySaved) return { ...shelf, postIds: shelf.postIds.filter((id) => id !== pending.postId) };
-      return shelf;
-    });
-    const count = selected.size;
+  try {
+    await persistAction('shelf.setPosts', { postId, shelfIds: selectedIds });
+    const count = selectedIds.length;
     state.shelfStatus = {
-      ownerId: pending.ownerId,
-      postId: pending.postId,
+      ownerId: account.id,
+      postId,
       message: count ? `Saved to ${count} ${count === 1 ? 'Shelf' : 'Shelves'}.` : 'Removed from your Shelves.',
     };
     state.shelfPickerPostId = null;
@@ -1288,42 +1414,52 @@ function submitShelfPicker(form) {
     state.shelfTimer = null;
     state.pendingShelf = null;
     render();
-  }, 180);
+  } catch (error) {
+    state.shelfPickerError = error.message || 'This post could not be saved. Please try again.';
+    state.shelfLoading = false;
+    state.shelfTimer = null;
+    state.pendingShelf = null;
+    render();
+  }
 }
 
-function removePostFromShelf(shelfId, postId) {
+async function removePostFromShelf(shelfId, postId) {
   const account = activeAccount();
   const shelf = state.shelves.find((entry) => entry.id === shelfId && entry.ownerId === account?.id);
   if (!account || !shelf || !shelf.postIds.includes(postId)) return;
-  shelf.postIds = shelf.postIds.filter((entry) => entry !== postId);
-  state.shelfStatus = { ownerId: account.id, shelfId, message: 'Post removed from this Shelf.' };
+  state.shelfLoading = true;
   render();
+  try {
+    await persistAction('shelf.removePost', { shelfId, postId });
+    state.shelfStatus = { ownerId: account.id, shelfId, message: 'Post removed from this Shelf.' };
+  } catch (error) {
+    state.shelfStatus = { ownerId: account.id, shelfId, kind: 'error', message: error.message || 'The post could not be removed.' };
+  } finally {
+    state.shelfLoading = false;
+    render();
+  }
 }
 
-function confirmDeleteShelf(shelfId) {
+async function confirmDeleteShelf(shelfId) {
   const account = activeAccount();
   const shelf = state.shelves.find((entry) => entry.id === shelfId && entry.ownerId === account?.id);
   if (!account || !shelf || state.shelfLoading) return;
   state.shelfLoading = true;
   state.pendingShelf = { action: 'delete', shelfId, ownerId: account.id };
   render();
-  state.shelfTimer = window.setTimeout(() => {
-    const pending = state.pendingShelf;
-    const targetShelf = pending && state.shelves.find((entry) => entry.id === pending.shelfId && entry.ownerId === pending.ownerId);
-    if (!pending || !targetShelf || activeAccount()?.id !== pending.ownerId) {
-      cancelShelfOperation();
-      state.shelfStatus = { ownerId: account.id, shelfId, kind: 'error', message: 'This Shelf could not be deleted. Please try again.' };
-      render();
-      return;
-    }
-    state.shelves = state.shelves.filter((entry) => entry.id !== targetShelf.id);
+  try {
+    await persistAction('shelf.delete', { shelfId });
     state.shelfDeleteConfirmId = null;
     state.shelfStatus = { ownerId: account.id, message: 'Shelf deleted. Its original posts remain on their Artist Boards.' };
+    navigate('/shelves');
+  } catch (error) {
+    state.shelfStatus = { ownerId: account.id, shelfId, kind: 'error', message: error.message || 'This Shelf could not be deleted. Please try again.' };
+  } finally {
     state.shelfLoading = false;
     state.shelfTimer = null;
     state.pendingShelf = null;
-    navigate('/shelves');
-  }, 180);
+    render();
+  }
 }
 
 function renderProfileAvatar(image, name, username, large = false) {
@@ -1560,6 +1696,7 @@ function beginProfileEdit() {
     biography: account.biography || '',
     interests: account.interests || '',
     profileImage: account.profileImage || '',
+    profileImageAssetId: account.profileImageAssetId || null,
   };
   state.profileError = '';
   state.profileFieldErrors = {};
@@ -1625,7 +1762,7 @@ function cancelUsernameEdit() {
   render();
 }
 
-function submitUsernameChange(form) {
+async function submitUsernameChange(form) {
   const account = activeAccount();
   if (!account || !['Fan', 'Artist'].includes(account.role)
     || form.dataset.userId !== account.id || !state.usernameEditorOpen || state.usernameLoading) return;
@@ -1648,47 +1785,23 @@ function submitUsernameChange(form) {
   state.usernamePending = { userId: account.id, username };
   state.usernameLoading = true;
   render();
-  state.usernameTimer = window.setTimeout(() => {
-    const pending = state.usernamePending;
-    const profile = pending && state.accounts.find((entry) => entry.id === pending.userId);
-    if (!pending || !profile || activeAccount()?.id !== pending.userId) {
-      resetUsernameEditor();
-      render();
-      return;
-    }
-    const duplicate = state.accounts.some((entry) => entry.id !== profile.id
-      && entry.username.toLocaleLowerCase() === pending.username.toLocaleLowerCase());
-    if (duplicate) {
-      state.usernameError = 'That username is already in use.';
-      state.usernameLoading = false;
-      state.usernamePending = null;
-      state.usernameTimer = null;
-      render();
-      return;
-    }
-
-    profile.username = pending.username;
-    if (state.pendingPost?.authorId === profile.id && state.pendingPost.post) {
-      state.pendingPost.post.authorUsername = pending.username;
-    }
-    for (const post of state.posts) {
-      if (post.authorId === profile.id) post.authorUsername = pending.username;
-    }
-    for (const comment of state.comments) {
-      if (comment.authorId === profile.id) comment.authorUsername = pending.username;
-    }
+  try {
+    await persistAction('profile.username', { username });
     state.usernameEditorOpen = false;
     state.usernameDraft = '';
     state.usernameError = '';
-    state.usernameStatus = { userId: profile.id, message: 'Your username has been updated.' };
+    state.usernameStatus = { userId: account.id, message: 'Your username has been updated.' };
+  } catch (error) {
+    state.usernameError = error.message || 'That username could not be saved.';
+  } finally {
     state.usernamePending = null;
     state.usernameTimer = null;
     state.usernameLoading = false;
     render();
-  }, 240);
+  }
 }
 
-function submitProfile(form) {
+async function submitProfile(form) {
   const account = activeAccount();
   if (!account || account.role !== 'Fan' || !state.editingProfile || state.profileLoading || state.usernameLoading) return;
   const formData = new FormData(form);
@@ -1715,31 +1828,32 @@ function submitProfile(form) {
     biography,
     interests,
     profileImage: state.profileDraft.profileImage || '',
+    profileImageAssetId: state.profileDraft.profileImageAssetId || null,
   };
   state.profilePending = { userId: account.id, values };
   state.profileLoading = true;
   state.profileError = '';
   render();
-  state.profileTimer = window.setTimeout(() => {
-    const pending = state.profilePending;
-    const profile = pending && state.accounts.find((entry) => entry.id === pending.userId && entry.role === 'Fan');
-    if (!pending || !profile) {
-      cancelProfileOperation();
-      state.profileError = 'Your profile could not be saved. Please try again.';
-      render();
-      return;
-    }
-    Object.assign(profile, pending.values);
-    state.profileStatus = { userId: pending.userId, message: 'Your profile has been updated.' };
+  try {
+    await persistAction('profile.update', {
+      name,
+      biography,
+      interests,
+      profileImageAssetId: values.profileImageAssetId,
+    });
+    state.profileStatus = { userId: account.id, message: 'Your profile has been updated.' };
     state.profileDraft = null;
     state.profileFieldErrors = {};
     state.profileImageError = '';
     state.editingProfile = false;
+  } catch (error) {
+    state.profileError = error.message || 'Your profile could not be saved.';
+  } finally {
     state.profilePending = null;
     state.profileTimer = null;
     state.profileLoading = false;
     render();
-  }, 240);
+  }
 }
 
 function selectProfileImage(input) {
@@ -1759,36 +1873,68 @@ function selectProfileImage(input) {
   state.profileImageError = '';
   state.profileImageLoading = true;
   const token = ++state.profileImageToken;
+  const localUrl = URL.createObjectURL(file);
+  state.profileDraft = {
+    ...(state.profileDraft || {}),
+    profileImage: localUrl,
+    profileImageAssetId: null,
+  };
   render();
-  const reader = new FileReader();
-  reader.onload = () => {
+  void uploadFile(file, 'profile').then((uploaded) => {
     if (token !== state.profileImageToken || !state.profileDraft) return;
-    if (typeof reader.result !== 'string') {
-      state.profileImageError = 'The selected image could not be read.';
-    } else {
-      state.profileDraft = { ...state.profileDraft, profileImage: reader.result };
-    }
+    URL.revokeObjectURL(localUrl);
+    state.profileDraft = {
+      ...state.profileDraft,
+      profileImage: uploaded.mediaUrl,
+      profileImageAssetId: uploaded.assetId,
+    };
     state.profileImageLoading = false;
     render();
-  };
-  reader.onerror = () => {
+  }).catch((error) => {
     if (token !== state.profileImageToken || !state.profileDraft) return;
-    state.profileImageError = 'The selected image could not be read.';
+    URL.revokeObjectURL(localUrl);
+    state.profileDraft = {
+      ...state.profileDraft,
+      profileImage: '',
+      profileImageAssetId: null,
+    };
+    state.profileImageError = error.message || 'The selected image could not be uploaded.';
     state.profileImageLoading = false;
     render();
-  };
-  reader.readAsDataURL(file);
+  });
 }
 
 function render() {
   if (!app) return;
+  unmountAuthWidget();
   const account = activeAccount();
   if (state.route === '/register') {
     app.innerHTML = renderRegistration();
+    if (state.pendingRole || state.draft.role) mountAuthWidget('sign-up', 'clerk-sign-up');
+    return;
+  }
+  if (state.route === '/login') {
+    app.innerHTML = renderLogin();
+    mountAuthWidget('sign-in', 'clerk-sign-in');
+    return;
+  }
+  if (state.route === '/profile/setup') {
+    if (!state.authUserId && !state.authLoading) {
+      navigate('/login', { replace: true });
+      return;
+    }
+    app.innerHTML = renderProfileSetup();
     return;
   }
   if (state.route === '/confirmation' && state.successAccountId) {
     app.innerHTML = renderConfirmation();
+    return;
+  }
+  if (state.dataLoading) {
+    app.innerHTML = renderShell(
+      `<section class="feed-loading" role="status" aria-live="polite" aria-busy="true"><span class="loading-dot"></span><p>Loading Stillroom…</p></section>`,
+      'Feed',
+    );
     return;
   }
   if (state.route === '/') {
@@ -1853,6 +1999,12 @@ function render() {
   else if (state.route === '/profile') { content = renderProfile(); title = 'Profile'; }
   else { content = renderHome(); title = 'Feed'; }
   app.innerHTML = renderShell(content, title);
+  if (state.dataError) {
+    const main = app.querySelector('.page-content');
+    if (main) {
+      main.insertAdjacentHTML('afterbegin', `<div class="app-data-error" role="alert"><span>${escapeHTML(state.dataError)}</span><button class="text-button" type="button" data-action="retry-data">Retry</button></div>`);
+    }
+  }
   if (postRoute) {
     let postId = postRoute[1];
     try { postId = decodeURIComponent(postId); } catch { /* Leave the board at its normal scroll position. */ }
@@ -1868,66 +2020,71 @@ function render() {
 }
 
 function beginRegistration(role = null) {
+  if (clerk?.isSignedIn && state.authUserId && !state.activeAccountId) {
+    navigate('/profile/setup');
+    return;
+  }
   state.pendingRole = role;
-  state.draft = { role, name: '', username: '', email: '' };
+  state.draft.role = role;
+  state.draft.name = '';
+  state.draft.username = '';
+  if (role === 'Fan' || role === 'Artist') {
+    window.sessionStorage.setItem('stillroom.pendingRole', role);
+  } else {
+    window.sessionStorage.removeItem('stillroom.pendingRole');
+  }
   state.errors = {};
   state.successAccountId = null;
   navigate('/register');
 }
 
-function submitRegistration(form) {
+async function submitProfileSetup(form) {
+  if (!state.authUserId || state.profileSetupLoading) return;
   const formData = new FormData(form);
   const name = String(formData.get('name') || '').trim();
   const usernameInput = String(formData.get('username') || '').trim();
   const username = usernameInput.replace(/^@/, '');
-  const email = String(formData.get('email') || '').trim();
-  const password = String(formData.get('password') || '');
-  const duplicate = state.accounts.some((account) => account.username.toLowerCase() === username.toLowerCase());
   const errors = {};
-
-  if (!state.draft.role) errors.role = 'Choose whether you’re joining as a Fan or Artist.';
+  if (!state.draft.role || !['Fan', 'Artist'].includes(state.draft.role)) {
+    errors.role = 'Choose whether you’re joining as a Fan or Artist.';
+  }
   if (!name) errors.name = 'Enter your name.';
+  else if (name.length > 100) errors.name = 'Names must be 100 characters or fewer.';
   if (!username) errors.username = 'Choose a username.';
-  else if (duplicate) errors.username = 'That username is already in use.';
-  if (!email) errors.email = 'Enter your email.';
-  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.email = 'Enter a valid email address.';
-  if (!password) errors.password = 'Create a password.';
-  else if (password.length < 8) errors.password = 'Use at least 8 characters.';
-
-  state.draft = { ...state.draft, name, username: usernameInput, email };
+  else if (username.length > 32) errors.username = 'Usernames must be 32 characters or fewer.';
+  else if (state.accounts.some((account) =>
+    account.id !== state.authUserId
+    && account.username.toLocaleLowerCase() === username.toLocaleLowerCase())) {
+    errors.username = 'That username is already in use.';
+  }
+  state.draft = { ...state.draft, name, username: usernameInput };
   state.errors = errors;
+  state.profileSetupError = '';
   if (Object.keys(errors).length) {
     render();
-    const firstInvalid = app.querySelector('[aria-invalid="true"]');
-    firstInvalid?.focus();
+    app.querySelector('[aria-invalid="true"]')?.focus();
     return;
   }
 
-  const account = {
-    id: `demo-${state.accounts.length + 1}`,
-    role: state.draft.role,
-    name,
-    username,
-    email,
-    biography: '',
-    profileImage: '',
-    createdAt: Date.now(),
-  };
-  state.pendingAccount = account;
-  state.loading = true;
-  state.errors = {};
+  state.profileSetupLoading = true;
   render();
-  state.registrationTimer = window.setTimeout(() => {
-    if (!state.pendingAccount) return;
-    state.accounts.push(state.pendingAccount);
-    state.activeAccountId = state.pendingAccount.id;
-    state.successAccountId = state.pendingAccount.id;
-    state.pendingAccount = null;
-    state.registrationTimer = null;
-    state.loading = false;
+  try {
+    const result = await createProfile({ role: state.draft.role, name, username });
+    const data = await getBootstrap();
+    applyBootstrap(data);
+    state.successAccountId = result.profile.id;
+    state.pendingRole = null;
+    state.profileSetupLoading = false;
+    state.profileSetupError = '';
+    window.sessionStorage.removeItem('stillroom.pendingRole');
     state.draft = { role: null, name: '', username: '', email: '' };
     navigate('/confirmation', { replace: true });
-  }, 650);
+  } catch (error) {
+    state.profileSetupLoading = false;
+    state.profileSetupError = error.message || 'Your profile could not be created.';
+    if (error.status === 409) state.errors.username = error.message;
+    render();
+  }
 }
 
 function beginBoardForm(mode) {
@@ -1938,8 +2095,8 @@ function beginBoardForm(mode) {
   }
   const existing = boardForOwner(account.id);
   state.boardDraft = mode === 'edit' && existing
-    ? { artistName: existing.artistName, discipline: existing.discipline, biography: existing.biography, profileImage: existing.profileImage || '' }
-    : { artistName: account.name, discipline: '', biography: '', profileImage: '' };
+    ? { artistName: existing.artistName, discipline: existing.discipline, biography: existing.biography, profileImage: existing.profileImage || '', profileImageAssetId: existing.profileImageAssetId || null }
+    : { artistName: account.name, discipline: '', biography: '', profileImage: '', profileImageAssetId: null };
   state.boardErrors = {};
   state.boardImageError = '';
   state.boardImageLoading = false;
@@ -1949,7 +2106,7 @@ function beginBoardForm(mode) {
   navigate(mode === 'edit' ? '/artists/edit' : '/artists/new');
 }
 
-function submitBoard(form) {
+async function submitBoard(form) {
   const account = activeAccount();
   const mode = form.dataset.mode;
   const existing = account?.role === 'Artist' ? boardForOwner(account.id) : null;
@@ -1975,35 +2132,41 @@ function submitBoard(form) {
   }
 
   const board = {
-    id: existing?.id || `board-${account.id}`,
     ownerId: account.id,
     artistName,
     discipline,
     biography,
     profileImage: state.boardDraft.profileImage || '',
-    createdAt: existing?.createdAt || Date.now(),
+    profileImageAssetId: state.boardDraft.profileImageAssetId || null,
   };
   state.pendingBoard = { mode, board };
   state.boardLoading = true;
   render();
-  state.boardTimer = window.setTimeout(() => {
-    if (!state.pendingBoard) return;
-    const pending = state.pendingBoard;
-    if (pending.mode === 'edit') {
-      state.boards = state.boards.map((entry) => entry.id === pending.board.id && entry.ownerId === account.id ? pending.board : entry);
-      state.boardSuccess = 'Board information saved.';
-    } else {
-      state.boards.push(pending.board);
-      state.boardSuccess = 'Your artist board is ready.';
-    }
-    state.boardSuccessId = pending.board.id;
+  try {
+    const data = await runAction('board.save', {
+      artistName,
+      discipline,
+      biography,
+      profileImageAssetId: board.profileImageAssetId,
+    });
+    applyBootstrap(data);
+    const savedBoard = data.boards.find((entry) => entry.ownerId === account.id);
+    if (!savedBoard) throw new Error('The board could not be found after saving.');
+    state.boardSuccess = mode === 'edit' ? 'Board information saved.' : 'Your artist board is ready.';
+    state.boardSuccessId = savedBoard.id;
     state.pendingBoard = null;
     state.boardTimer = null;
     state.boardLoading = false;
     state.boardDraft = null;
     state.boardErrors = {};
-    navigate(`/board/${encodeURIComponent(pending.board.id)}`, { replace: true });
-  }, 550);
+    navigate(`/board/${encodeURIComponent(savedBoard.id)}`, { replace: true });
+  } catch (error) {
+    state.boardErrors = { form: error.message || 'Your artist board could not be saved.' };
+    state.pendingBoard = null;
+    state.boardTimer = null;
+    state.boardLoading = false;
+    render();
+  }
 }
 
 function startPostComposer(boardId, postId = null) {
@@ -2025,21 +2188,25 @@ function startPostComposer(boardId, postId = null) {
   navigate(`/board/${encodeURIComponent(board.id)}`);
 }
 
-function toggleArtistFollow(boardId) {
+async function toggleArtistFollow(boardId) {
   const account = activeAccount();
   const board = state.boards.find((entry) => entry.id === boardId);
   if (account?.role !== 'Fan' || !board) return;
 
   const current = followedArtistIds(account.id);
   const following = current.includes(board.ownerId);
-  state.followedArtistsByFan[account.id] = following
-    ? current.filter((artistId) => artistId !== board.ownerId)
-    : [...current, board.ownerId];
-  state.followStatus = {
-    boardId: board.id,
-    userId: account.id,
-    message: following ? `${board.artistName} removed from My Artists.` : `${board.artistName} added to My Artists.`,
-  };
+  state.followStatus = { boardId: board.id, userId: account.id, pending: true, message: 'Updating My Artists…' };
+  render();
+  try {
+    await persistAction('follow.toggle', { artistId: board.id });
+    state.followStatus = {
+      boardId: board.id,
+      userId: account.id,
+      message: following ? `${board.artistName} removed from My Artists.` : `${board.artistName} added to My Artists.`,
+    };
+  } catch (error) {
+    state.followStatus = { boardId: board.id, userId: account.id, kind: 'error', message: error.message || 'My Artists could not be updated.' };
+  }
   render();
 }
 
@@ -2052,7 +2219,7 @@ function toggleComments(postId) {
   render();
 }
 
-function submitComment(form) {
+async function submitComment(form) {
   const account = activeAccount();
   const post = state.posts.find((entry) => entry.id === form.dataset.postId && isVisibleFanPost(entry));
   const commentId = form.dataset.commentId || null;
@@ -2091,47 +2258,34 @@ function submitComment(form) {
   };
   state.commentStatus = null;
   render();
-  state.commentTimer = window.setTimeout(() => {
-    const pending = state.commentPending;
-    if (!pending) return;
-    const targetPost = state.posts.find((entry) => entry.id === pending.postId);
-    const author = state.accounts.find((entry) => entry.id === pending.userId);
-    let message = '';
-    let kind = 'success';
-    if (!targetPost || author?.role !== 'Fan') {
-      kind = 'error';
-      message = 'This comment could not be saved. Please try again.';
-    } else if (pending.action === 'create') {
-      state.comments.push({
-        id: `comment-${state.nextCommentId++}`,
-        postId: pending.postId,
-        authorId: pending.userId,
-        authorUsername: author.username,
-        content: pending.content,
-        createdAt: Date.now(),
-      });
-      delete state.commentDrafts[pending.draftKey];
-      delete state.commentErrors[pending.draftKey];
-      message = 'Comment posted.';
-    } else {
-      const targetComment = state.comments.find((entry) => entry.id === pending.commentId && entry.postId === pending.postId && entry.authorId === pending.userId);
-      if (!targetComment) {
-        kind = 'error';
-        message = 'This comment is no longer available to edit.';
-      } else {
-        targetComment.content = pending.content;
-        targetComment.updatedAt = Date.now();
-        delete state.commentErrors[pending.commentId];
-        message = 'Comment updated.';
-      }
-    }
+  try {
+    await persistAction('comment.save', {
+      commentId,
+      postId: post.id,
+      content,
+    });
+    if (!commentId) delete state.commentDrafts[key];
+    delete state.commentErrors[key];
+    state.commentEditor = null;
+    state.commentStatus = {
+      userId: account.id,
+      postId: post.id,
+      kind: 'success',
+      message: commentId ? 'Comment updated.' : 'Comment posted.',
+    };
+  } catch (error) {
+    state.commentStatus = {
+      userId: account.id,
+      postId: post.id,
+      kind: 'error',
+      message: error.message || 'This comment could not be saved.',
+    };
+  } finally {
     state.commentPending = null;
     state.commentTimer = null;
-    state.commentEditor = null;
-    state.commentStatus = { userId: pending.userId, postId: pending.postId, kind, message };
-    if (!state.expandedCommentPostIds.includes(pending.postId)) state.expandedCommentPostIds.push(pending.postId);
+    if (!state.expandedCommentPostIds.includes(post.id)) state.expandedCommentPostIds.push(post.id);
     render();
-  }, 180);
+  }
 }
 
 function beginCommentEdit(commentId) {
@@ -2160,7 +2314,7 @@ function requestDeleteComment(commentId) {
   render();
 }
 
-function confirmDeleteComment(commentId) {
+async function confirmDeleteComment(commentId) {
   const account = activeAccount();
   const comment = state.comments.find((entry) => entry.id === commentId);
   if (account?.role !== 'Fan' || comment?.authorId !== account.id || state.commentPending || state.commentDeleteConfirmId !== commentId) return;
@@ -2168,25 +2322,23 @@ function confirmDeleteComment(commentId) {
   state.commentDeleteConfirmId = null;
   state.commentStatus = null;
   render();
-  state.commentTimer = window.setTimeout(() => {
-    const pending = state.commentPending;
-    if (!pending) return;
-    const exists = state.comments.some((entry) => entry.id === pending.commentId && entry.authorId === pending.userId);
-    let kind = 'success';
-    let message = 'Comment deleted.';
-    if (exists) {
-      state.comments = state.comments.filter((entry) => entry.id !== pending.commentId);
-      delete state.commentErrors[pending.commentId];
-      if (state.commentEditor?.commentId === pending.commentId) state.commentEditor = null;
-    } else {
-      kind = 'error';
-      message = 'This comment could not be deleted. Please try again.';
-    }
+  try {
+    await persistAction('comment.delete', { commentId });
+    delete state.commentErrors[commentId];
+    if (state.commentEditor?.commentId === commentId) state.commentEditor = null;
+    state.commentStatus = { userId: account.id, postId: comment.postId, kind: 'success', message: 'Comment deleted.' };
+  } catch (error) {
+    state.commentStatus = {
+      userId: account.id,
+      postId: comment.postId,
+      kind: 'error',
+      message: error.message || 'This comment could not be deleted.',
+    };
+  } finally {
     state.commentPending = null;
     state.commentTimer = null;
-    state.commentStatus = { userId: pending.userId, postId: pending.postId, kind, message };
     render();
-  }, 180);
+  }
 }
 
 function toggleRepost(postId) {
@@ -2205,7 +2357,7 @@ function cancelRepost() {
   render();
 }
 
-function confirmRepost(postId) {
+async function confirmRepost(postId) {
   const account = activeAccount();
   const confirmation = state.repostConfirm;
   const post = state.posts.find((entry) => entry.id === postId && isVisibleFanPost(entry));
@@ -2227,40 +2379,26 @@ function confirmRepost(postId) {
   state.repostConfirm = null;
   state.repostStatus = null;
   render();
-  state.repostTimer = window.setTimeout(() => {
-    const pending = state.repostPending;
-    if (!pending) return;
-    const targetPost = state.posts.find((entry) => entry.id === pending.postId && isVisibleFanPost(entry));
-    const reposter = state.accounts.find((entry) => entry.id === pending.userId && entry.role === 'Fan');
-    let kind = 'success';
-    let message = '';
-    if (!targetPost || !reposter) {
-      kind = 'error';
-      message = 'This repost could not be completed. Please try again.';
-    } else if (pending.action === 'create') {
-      const duplicate = state.reposts.some((entry) => entry.userId === pending.userId && entry.postId === pending.postId);
-      if (duplicate) {
-        kind = 'error';
-        message = 'You have already reposted this post.';
-      } else {
-        state.reposts.push({ id: `repost-${state.nextRepostId++}`, userId: pending.userId, postId: pending.postId, repostedAt: Date.now() });
-        message = 'Repost added to your profile.';
-      }
-    } else {
-      const ownedRepost = state.reposts.find((entry) => entry.id === pending.repostId && entry.userId === pending.userId && entry.postId === pending.postId);
-      if (!ownedRepost) {
-        kind = 'error';
-        message = 'Your repost is no longer available.';
-      } else {
-        state.reposts = state.reposts.filter((entry) => entry.id !== ownedRepost.id);
-        message = 'Your repost was removed.';
-      }
-    }
+  try {
+    await persistAction('repost.toggle', { postId });
+    state.repostStatus = {
+      userId: account.id,
+      postId,
+      kind: 'success',
+      message: confirmation.action === 'create' ? 'Repost added to your profile.' : 'Your repost was removed.',
+    };
+  } catch (error) {
+    state.repostStatus = {
+      userId: account.id,
+      postId,
+      kind: 'error',
+      message: error.message || 'This repost could not be completed.',
+    };
+  } finally {
     state.repostPending = null;
     state.repostTimer = null;
-    state.repostStatus = { userId: pending.userId, postId: pending.postId, kind, message };
     render();
-  }, 180);
+  }
 }
 
 function discardPostDraft(authorId, boardId, postId = null) {
@@ -2272,13 +2410,25 @@ function discardPostDraft(authorId, boardId, postId = null) {
   if (state.postEditor?.key === key) state.postEditor = null;
 }
 
-function deletePost(postId) {
+async function deletePost(postId) {
   const account = activeAccount();
   const post = state.posts.find((entry) => entry.id === postId);
   if (!account || account.role !== 'Fan' || !post || post.authorId !== account.id
     || (state.postPublishing && state.pendingPost?.postId === post.id)
     || state.commentPending?.postId === post.id || state.repostPending?.postId === post.id) return;
 
+  state.postPublishing = true;
+  state.postStatus = null;
+  render();
+  try {
+    await persistAction('post.delete', { postId });
+  } catch (error) {
+    state.postPublishing = false;
+    state.postStatus = { boardId: post.boardId, userId: account.id, kind: 'error', message: error.message || 'This post could not be deleted.' };
+    render();
+    return;
+  }
+  state.postPublishing = false;
   for (const [key, draft] of Object.entries(state.postDrafts)) {
     if (draft.postId === post.id) {
       releaseDraftMedia(draft);
@@ -2313,7 +2463,7 @@ function deletePost(postId) {
   render();
 }
 
-function submitPost(form) {
+async function submitPost(form) {
   const account = activeAccount();
   const board = state.boards.find((entry) => entry.id === form.dataset.boardId);
   const postId = form.dataset.postId || null;
@@ -2340,7 +2490,7 @@ function submitPost(form) {
   }
 
   const post = {
-    id: existing?.id || `post-${state.nextPostId++}`,
+    id: existing?.id || null,
     boardId: board.id,
     authorId: account.id,
     authorUsername: account.username,
@@ -2351,34 +2501,35 @@ function submitPost(form) {
   state.pendingPost = { key, postId: existing?.id || null, boardId: board.id, authorId: account.id, post };
   state.postPublishing = true;
   render();
-  state.postTimer = window.setTimeout(() => {
-    const pending = state.pendingPost;
-    if (!pending) return;
-    const oldPost = pending.postId ? state.posts.find((entry) => entry.id === pending.postId) : null;
-    if (pending.postId && oldPost?.media?.url && oldPost.media.url !== pending.post.media?.url && oldPost.media.url.startsWith('blob:')) {
-      URL.revokeObjectURL(oldPost.media.url);
-    }
-    state.posts = pending.postId
-      ? state.posts.map((entry) => entry.id === pending.postId && entry.authorId === pending.authorId ? pending.post : entry)
-      : [pending.post, ...state.posts];
-    delete state.postDrafts[pending.key];
-    delete state.postErrors[pending.key];
-    if (state.postEditor?.key === pending.key) state.postEditor = null;
+  try {
+    const data = await runAction('post.save', {
+      postId: existing?.id || null,
+      boardId: board.id,
+      content: content.trim(),
+      mediaAssetId: draft.media?.assetId || null,
+    });
+    applyBootstrap(data);
+    delete state.postDrafts[key];
+    delete state.postErrors[key];
+    if (state.postEditor?.key === key) state.postEditor = null;
     state.postStatus = {
-      boardId: pending.boardId,
-      userId: pending.authorId,
-      message: pending.postId ? 'Your changes have been published.' : 'Your post is live.',
+      boardId: board.id,
+      userId: account.id,
+      message: existing ? 'Your changes have been published.' : 'Your post is live.',
     };
+    state.homeTab = 'for-you';
+  } catch (error) {
+    state.postErrors[key] = error.message || 'Your post could not be published.';
+  } finally {
     state.postPublishing = false;
     state.pendingPost = null;
     state.postTimer = null;
     state.deleteConfirmPostId = null;
-    state.homeTab = 'for-you';
     render();
-  }, 500);
+  }
 }
 
-function selectPostMedia(input) {
+async function selectPostMedia(input) {
   const account = activeAccount();
   const editor = state.postEditor;
   const file = input.files?.[0];
@@ -2408,18 +2559,101 @@ function selectPostMedia(input) {
     return;
   }
 
+  const token = ++state.postMediaToken;
+  let previewUrl;
   try {
-    const url = URL.createObjectURL(file);
-    releaseDraftMedia(draft);
-    state.postDrafts[key] = {
-      ...draft,
-      media: { file, url, type, name: file.name, isNew: true },
-    };
-    state.postErrors[key] = '';
-    render();
+    previewUrl = URL.createObjectURL(file);
   } catch {
     state.postErrors[key] = 'This file could not be prepared. Try another file.';
     render();
+    return;
+  }
+  releaseDraftMedia(draft);
+  state.postDrafts[key] = {
+    ...draft,
+    media: { url: previewUrl, type, name: file.name, size: file.size, isNew: true, uploading: true },
+  };
+  state.postErrors[key] = '';
+  state.postMediaError = '';
+  state.postMediaLoading = true;
+  render();
+  try {
+    const uploaded = await uploadFile(file, 'post');
+    if (token !== state.postMediaToken || !state.postDrafts[key]) {
+      URL.revokeObjectURL(previewUrl);
+      return;
+    }
+    URL.revokeObjectURL(previewUrl);
+    const current = state.postDrafts[key];
+    state.postDrafts[key] = {
+      ...current,
+      media: {
+        assetId: uploaded.assetId,
+        url: uploaded.mediaUrl,
+        type,
+        name: file.name,
+        size: file.size,
+        isNew: false,
+      },
+    };
+    state.postMediaError = '';
+  } catch (error) {
+    if (token === state.postMediaToken) {
+      URL.revokeObjectURL(previewUrl);
+      const current = state.postDrafts[key];
+      if (current) state.postDrafts[key] = { ...current, media: null };
+      state.postErrors[key] = error.message || 'This file could not be uploaded.';
+      state.postMediaError = state.postErrors[key];
+    }
+  } finally {
+    if (token === state.postMediaToken) {
+      state.postMediaLoading = false;
+      render();
+    }
+  }
+}
+
+async function selectBoardImage(file) {
+  if (!file || !state.boardDraft) return;
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+    state.boardImageError = 'Choose a PNG, JPG, or WebP image.';
+    render();
+    return;
+  }
+  if (file.size > 4 * 1024 * 1024) {
+    state.boardImageError = 'Choose an image smaller than 4 MB.';
+    render();
+    return;
+  }
+  const token = ++state.boardImageReadToken;
+  const localUrl = URL.createObjectURL(file);
+  state.boardDraft = { ...state.boardDraft, profileImage: localUrl, profileImageAssetId: null };
+  state.boardImageError = '';
+  state.boardImageLoading = true;
+  render();
+  try {
+    const uploaded = await uploadFile(file, 'board');
+    if (token !== state.boardImageReadToken || !state.boardDraft) {
+      URL.revokeObjectURL(localUrl);
+      return;
+    }
+    URL.revokeObjectURL(localUrl);
+    state.boardDraft = {
+      ...state.boardDraft,
+      profileImage: uploaded.mediaUrl,
+      profileImageAssetId: uploaded.assetId,
+    };
+  } catch (error) {
+    if (token === state.boardImageReadToken && state.boardDraft) {
+      URL.revokeObjectURL(localUrl);
+      state.boardDraft = { ...state.boardDraft, profileImage: '', profileImageAssetId: null };
+      state.boardImageError = error.message || 'The selected image could not be uploaded.';
+    }
+  } finally {
+    if (token === state.boardImageReadToken) {
+      state.boardImageLoading = false;
+      render();
+    }
   }
 }
 
@@ -2529,52 +2763,19 @@ app?.addEventListener('change', (event) => {
     return;
   }
   if (target.matches('[data-profile-image]')) {
-    selectProfileImage(target);
+    void selectProfileImage(target);
     return;
   }
   if (!target.matches('[data-board-image]')) return;
   const file = target.files?.[0];
-  if (!file) return;
-  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
-    state.boardImageError = 'Choose a PNG, JPG, or WebP image.';
-    render();
-    return;
-  }
-  if (file.size > 4 * 1024 * 1024) {
-    state.boardImageError = 'Choose an image smaller than 4 MB.';
-    render();
-    return;
-  }
-
-  state.boardImageError = '';
-  state.boardImageLoading = true;
-  const readToken = ++state.boardImageReadToken;
-  render();
-  const reader = new FileReader();
-  reader.onload = () => {
-    if (readToken !== state.boardImageReadToken || !state.boardDraft) return;
-    if (typeof reader.result !== 'string' || !state.boardDraft) {
-      state.boardImageError = 'The selected image could not be read.';
-    } else {
-      state.boardDraft.profileImage = reader.result;
-    }
-    state.boardImageLoading = false;
-    render();
-  };
-  reader.onerror = () => {
-    if (readToken !== state.boardImageReadToken || !state.boardDraft) return;
-    state.boardImageError = 'The selected image could not be read.';
-    state.boardImageLoading = false;
-    render();
-  };
-  reader.readAsDataURL(file);
+  if (file) void selectBoardImage(file);
 });
 
 app?.addEventListener('submit', (event) => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement)) return;
   event.preventDefault();
-  if (form.dataset.form === 'registration' && !state.loading) submitRegistration(form);
+  if (form.dataset.form === 'profile-setup' && !state.profileSetupLoading) void submitProfileSetup(form);
   else if (form.dataset.form === 'board' && !state.boardLoading && !state.usernameLoading) submitBoard(form);
   else if (form.dataset.form === 'post' && !state.postPublishing) submitPost(form);
   else if (form.dataset.form === 'shelf' && !state.shelfLoading) submitShelfForm(form);
@@ -2632,10 +2833,16 @@ app?.addEventListener('click', (event) => {
   }
   else if (action === 'choose-role') {
     state.draft.role = target.dataset.role;
+    state.pendingRole = target.dataset.role;
+    if (state.pendingRole === 'Fan' || state.pendingRole === 'Artist') {
+      window.sessionStorage.setItem('stillroom.pendingRole', state.pendingRole);
+    }
     state.errors.role = '';
     render();
   } else if (action === 'back-from-register') {
     state.errors = {};
+    state.pendingRole = null;
+    window.sessionStorage.removeItem('stillroom.pendingRole');
     state.draft = { role: null, name: '', username: '', email: '' };
     navigate(activeAccount() ? '/profile' : '/home');
   } else if (action === 'open-profile') navigate('/profile', { replace: true });
@@ -2694,6 +2901,12 @@ app?.addEventListener('click', (event) => {
     state.successAccountId = null;
     state.editingProfile = false;
     navigate('/home');
+    if (clerk) void clerk.signOut().then(() => syncSession()).catch((error) => {
+      state.dataError = error.message || 'You could not be signed out.';
+      render();
+    });
+  } else if (action === 'retry-data') {
+    void syncSession();
   } else if (action === 'home-tab') {
     state.homeTab = target.dataset.tab;
     render();
@@ -2912,8 +3125,8 @@ window.addEventListener('popstate', () => {
 });
 
 const initialSpecialRoute = /^\/(?:board\/[^/]+|post\/[^/]+|profile\/[^/]+|artists\/(?:new|edit)|shelves\/(?:new|[^/]+(?:\/edit)?))$/.test(state.route);
-if (!navItems.some((item) => item.path === state.route) && state.route !== '/' && state.route !== '/register' && state.route !== '/confirmation' && !initialSpecialRoute) {
+if (!navItems.some((item) => item.path === state.route) && state.route !== '/' && state.route !== '/register' && state.route !== '/login' && state.route !== '/confirmation' && !initialSpecialRoute) {
   state.route = '/';
   history.replaceState({}, '', hrefFor('/'));
 }
-render();
+void startStillroom();
