@@ -134,23 +134,38 @@ function clearAccountEditors() {
   state.profileImageToken += 1;
   state.profileImageLoading = false;
   state.boardDraft = null;
+  state.boardErrors = {};
+  state.boardLoading = false;
+  state.pendingBoard = null;
+  state.boardSuccess = '';
+  state.boardSuccessId = null;
   state.boardImageReadToken += 1;
   state.boardImageLoading = false;
   state.postMediaToken += 1;
   state.postMediaLoading = false;
   state.postEditor = null;
+  state.postPublishing = false;
+  state.pendingPost = null;
   state.postErrors = {};
   state.postStatus = null;
   state.commentDrafts = {};
+  state.commentErrors = {};
+  state.commentPending = null;
   state.commentEditor = null;
   state.commentStatus = null;
   state.commentDeleteConfirmId = null;
   state.repostConfirm = null;
+  state.repostPending = null;
   state.repostStatus = null;
   state.shelfPickerPostId = null;
   state.shelfPickerSelection = [];
   state.shelfPickerError = '';
   state.shelfDraft = null;
+  state.shelfLoading = false;
+  state.pendingShelf = null;
+  state.shelfReturnPostId = null;
+  state.shelfReturnRoute = null;
+  state.followStatus = null;
   state.shelfErrors = {};
   state.shelfStatus = null;
   state.shelfDeleteConfirmId = null;
@@ -336,23 +351,29 @@ async function persistAction(action, payload = {}) {
   return data;
 }
 
+function handleClerkSession({ session }) {
+  const sessionId = session?.id || null;
+  if (observedClerkSession === sessionId) return;
+  observedClerkSession = sessionId;
+  authGeneration += 1;
+  state.authNotice = null;
+  if (sessionId) window.sessionStorage.removeItem('stillroom.signedOut');
+  clearAccountEditors();
+  state.authUserId = null;
+  state.activeAccountId = null;
+  // Replace the previous account's DOM even if syncSession joins an old request.
+  state.authLoading = true;
+  state.dataLoading = true;
+  state.dataError = '';
+  render();
+  void syncSession();
+}
+
 async function startStillroom() {
   render();
   try {
     await loadClerk();
-    clerk.addListener(({ session }) => {
-      const sessionId = session?.id || null;
-      if (observedClerkSession !== sessionId) {
-        observedClerkSession = sessionId;
-        authGeneration += 1;
-        state.authNotice = null;
-        if (sessionId) window.sessionStorage.removeItem('stillroom.signedOut');
-        clearAccountEditors();
-        state.authUserId = null;
-        state.activeAccountId = null;
-        void syncSession();
-      }
-    });
+    clerk.addListener(handleClerkSession);
     await syncSession();
     if (!state.authUserId && !state.dataError && window.sessionStorage.getItem('stillroom.signedOut')) {
       window.sessionStorage.removeItem('stillroom.signedOut');
@@ -1405,6 +1426,7 @@ function beginShelfForm(mode, shelfId = null) {
 }
 
 async function submitShelfForm(form) {
+  const generation = authGeneration;
   const account = activeAccount();
   if (!account || state.shelfLoading) return;
   const mode = form.dataset.mode === 'edit' ? 'edit' : 'create';
@@ -1441,6 +1463,7 @@ async function submitShelfForm(form) {
       shelfId: mode === 'edit' ? shelfId : null,
       ...values,
     });
+    if (generation !== authGeneration) return;
     const shelf = mode === 'edit'
       ? data.shelves.find((entry) => entry.id === shelfId)
       : data.shelves.find((entry) => entry.ownerId === account.id && !previousShelfIds.has(entry.id));
@@ -1461,6 +1484,7 @@ async function submitShelfForm(form) {
     navigate(`/shelves/${encodeURIComponent(shelf.id)}`);
     if (returnPostId && state.posts.some((entry) => entry.id === returnPostId)) openShelfPicker(returnPostId, shelf.id);
   } catch (error) {
+    if (generation !== authGeneration) return;
     state.shelfErrors = { form: error.message || 'This Shelf could not be saved. Please try again.' };
     state.shelfLoading = false;
     state.shelfTimer = null;
@@ -1483,6 +1507,7 @@ function openShelfPicker(postId, preselectedShelfId = null) {
 }
 
 async function submitShelfPicker(form) {
+  const generation = authGeneration;
   const account = activeAccount();
   const postId = form.dataset.postId;
   const post = state.posts.find((entry) => entry.id === postId && isVisibleFanPost(entry));
@@ -1511,6 +1536,7 @@ async function submitShelfPicker(form) {
   render();
   try {
     await persistAction('shelf.setPosts', { postId, shelfIds: selectedIds });
+    if (generation !== authGeneration) return;
     const count = selectedIds.length;
     state.shelfStatus = {
       ownerId: account.id,
@@ -1525,6 +1551,7 @@ async function submitShelfPicker(form) {
     state.pendingShelf = null;
     render();
   } catch (error) {
+    if (generation !== authGeneration) return;
     state.shelfPickerError = error.message || 'This post could not be saved. Please try again.';
     state.shelfLoading = false;
     state.shelfTimer = null;
@@ -1534,6 +1561,7 @@ async function submitShelfPicker(form) {
 }
 
 async function removePostFromShelf(shelfId, postId) {
+  const generation = authGeneration;
   const account = activeAccount();
   const shelf = state.shelves.find((entry) => entry.id === shelfId && entry.ownerId === account?.id);
   if (!account || !shelf || !shelf.postIds.includes(postId)) return;
@@ -1541,16 +1569,20 @@ async function removePostFromShelf(shelfId, postId) {
   render();
   try {
     await persistAction('shelf.removePost', { shelfId, postId });
+    if (generation !== authGeneration) return;
     state.shelfStatus = { ownerId: account.id, shelfId, message: 'Post removed from this Shelf.' };
   } catch (error) {
+    if (generation !== authGeneration) return;
     state.shelfStatus = { ownerId: account.id, shelfId, kind: 'error', message: error.message || 'The post could not be removed.' };
   } finally {
+    if (generation !== authGeneration) return;
     state.shelfLoading = false;
     render();
   }
 }
 
 async function confirmDeleteShelf(shelfId) {
+  const generation = authGeneration;
   const account = activeAccount();
   const shelf = state.shelves.find((entry) => entry.id === shelfId && entry.ownerId === account?.id);
   if (!account || !shelf || state.shelfLoading) return;
@@ -1559,12 +1591,15 @@ async function confirmDeleteShelf(shelfId) {
   render();
   try {
     await persistAction('shelf.delete', { shelfId });
+    if (generation !== authGeneration) return;
     state.shelfDeleteConfirmId = null;
     state.shelfStatus = { ownerId: account.id, message: 'Shelf deleted. Its original posts remain on their Artist Boards.' };
     navigate('/shelves');
   } catch (error) {
+    if (generation !== authGeneration) return;
     state.shelfStatus = { ownerId: account.id, shelfId, kind: 'error', message: error.message || 'This Shelf could not be deleted. Please try again.' };
   } finally {
+    if (generation !== authGeneration) return;
     state.shelfLoading = false;
     state.shelfTimer = null;
     state.pendingShelf = null;
@@ -1871,6 +1906,7 @@ function cancelUsernameEdit() {
 }
 
 async function submitUsernameChange(form) {
+  const generation = authGeneration;
   const account = activeAccount();
   if (!account || !['Fan', 'Artist'].includes(account.role)
     || form.dataset.userId !== account.id || !state.usernameEditorOpen || state.usernameLoading) return;
@@ -1895,13 +1931,16 @@ async function submitUsernameChange(form) {
   render();
   try {
     await persistAction('profile.username', { username });
+    if (generation !== authGeneration) return;
     state.usernameEditorOpen = false;
     state.usernameDraft = '';
     state.usernameError = '';
     state.usernameStatus = { userId: account.id, message: 'Your username has been updated.' };
   } catch (error) {
+    if (generation !== authGeneration) return;
     state.usernameError = error.message || 'That username could not be saved.';
   } finally {
+    if (generation !== authGeneration) return;
     state.usernamePending = null;
     state.usernameTimer = null;
     state.usernameLoading = false;
@@ -1910,6 +1949,7 @@ async function submitUsernameChange(form) {
 }
 
 async function submitProfile(form) {
+  const generation = authGeneration;
   const account = activeAccount();
   if (!account || account.role !== 'Fan' || !state.editingProfile || state.profileLoading || state.usernameLoading) return;
   const formData = new FormData(form);
@@ -1949,14 +1989,17 @@ async function submitProfile(form) {
       interests,
       profileImageAssetId: values.profileImageAssetId,
     });
+    if (generation !== authGeneration) return;
     state.profileStatus = { userId: account.id, message: 'Your profile has been updated.' };
     state.profileDraft = null;
     state.profileFieldErrors = {};
     state.profileImageError = '';
     state.editingProfile = false;
   } catch (error) {
+    if (generation !== authGeneration) return;
     state.profileError = error.message || 'Your profile could not be saved.';
   } finally {
+    if (generation !== authGeneration) return;
     state.profilePending = null;
     state.profileTimer = null;
     state.profileLoading = false;
@@ -2179,6 +2222,7 @@ async function submitProfileSetup(form) {
   render();
   try {
     const result = await createProfile({ role: state.draft.role, name, username });
+    if (generation !== authGeneration) return;
     const data = await getBootstrap();
     if (generation !== authGeneration) return;
     applyBootstrap(data);
@@ -2190,6 +2234,7 @@ async function submitProfileSetup(form) {
     state.draft = { role: null, name: '', username: '', email: '' };
     navigate('/confirmation', { replace: true });
   } catch (error) {
+    if (generation !== authGeneration) return;
     state.profileSetupLoading = false;
     state.profileSetupError = error.message || 'Your profile could not be created.';
     if (error.status === 409) state.errors.username = error.message;
@@ -2217,6 +2262,7 @@ function beginBoardForm(mode) {
 }
 
 async function submitBoard(form) {
+  const generation = authGeneration;
   const account = activeAccount();
   const mode = form.dataset.mode;
   const existing = account?.role === 'Artist' ? boardForOwner(account.id) : null;
@@ -2253,13 +2299,13 @@ async function submitBoard(form) {
   state.boardLoading = true;
   render();
   try {
-    const data = await runAction('board.save', {
+    const data = await persistAction('board.save', {
       artistName,
       discipline,
       biography,
       profileImageAssetId: board.profileImageAssetId,
     });
-    applyBootstrap(data);
+    if (generation !== authGeneration) return;
     const savedBoard = data.boards.find((entry) => entry.ownerId === account.id);
     if (!savedBoard) throw new Error('The board could not be found after saving.');
     state.boardSuccess = mode === 'edit' ? 'Board information saved.' : 'Your artist board is ready.';
@@ -2271,6 +2317,7 @@ async function submitBoard(form) {
     state.boardErrors = {};
     navigate(`/board/${encodeURIComponent(savedBoard.id)}`, { replace: true });
   } catch (error) {
+    if (generation !== authGeneration) return;
     state.boardErrors = { form: error.message || 'Your artist board could not be saved.' };
     state.pendingBoard = null;
     state.boardTimer = null;
@@ -2299,6 +2346,7 @@ function startPostComposer(boardId, postId = null) {
 }
 
 async function toggleArtistFollow(boardId) {
+  const generation = authGeneration;
   const account = activeAccount();
   const board = state.boards.find((entry) => entry.id === boardId);
   if (account?.role !== 'Fan' || !board || state.followStatus?.pending) return;
@@ -2309,12 +2357,14 @@ async function toggleArtistFollow(boardId) {
   render();
   try {
     await persistAction('follow.toggle', { artistId: board.id });
+    if (generation !== authGeneration) return;
     state.followStatus = {
       boardId: board.id,
       userId: account.id,
       message: following ? `${board.artistName} removed from My Artists.` : `${board.artistName} added to My Artists.`,
     };
   } catch (error) {
+    if (generation !== authGeneration) return;
     state.followStatus = { boardId: board.id, userId: account.id, kind: 'error', message: error.message || 'My Artists could not be updated.' };
   }
   render();
@@ -2330,6 +2380,7 @@ function toggleComments(postId) {
 }
 
 async function submitComment(form) {
+  const generation = authGeneration;
   const account = activeAccount();
   const post = state.posts.find((entry) => entry.id === form.dataset.postId && isVisibleFanPost(entry));
   const commentId = form.dataset.commentId || null;
@@ -2374,6 +2425,7 @@ async function submitComment(form) {
       postId: post.id,
       content,
     });
+    if (generation !== authGeneration) return;
     if (!commentId) delete state.commentDrafts[key];
     delete state.commentErrors[key];
     state.commentEditor = null;
@@ -2384,6 +2436,7 @@ async function submitComment(form) {
       message: commentId ? 'Comment updated.' : 'Comment posted.',
     };
   } catch (error) {
+    if (generation !== authGeneration) return;
     state.commentStatus = {
       userId: account.id,
       postId: post.id,
@@ -2391,6 +2444,7 @@ async function submitComment(form) {
       message: error.message || 'This comment could not be saved.',
     };
   } finally {
+    if (generation !== authGeneration) return;
     state.commentPending = null;
     state.commentTimer = null;
     if (!state.expandedCommentPostIds.includes(post.id)) state.expandedCommentPostIds.push(post.id);
@@ -2425,6 +2479,7 @@ function requestDeleteComment(commentId) {
 }
 
 async function confirmDeleteComment(commentId) {
+  const generation = authGeneration;
   const account = activeAccount();
   const comment = state.comments.find((entry) => entry.id === commentId);
   if (account?.role !== 'Fan' || comment?.authorId !== account.id || state.commentPending || state.commentDeleteConfirmId !== commentId) return;
@@ -2434,10 +2489,12 @@ async function confirmDeleteComment(commentId) {
   render();
   try {
     await persistAction('comment.delete', { commentId });
+    if (generation !== authGeneration) return;
     delete state.commentErrors[commentId];
     if (state.commentEditor?.commentId === commentId) state.commentEditor = null;
     state.commentStatus = { userId: account.id, postId: comment.postId, kind: 'success', message: 'Comment deleted.' };
   } catch (error) {
+    if (generation !== authGeneration) return;
     state.commentStatus = {
       userId: account.id,
       postId: comment.postId,
@@ -2445,6 +2502,7 @@ async function confirmDeleteComment(commentId) {
       message: error.message || 'This comment could not be deleted.',
     };
   } finally {
+    if (generation !== authGeneration) return;
     state.commentPending = null;
     state.commentTimer = null;
     render();
@@ -2468,6 +2526,7 @@ function cancelRepost() {
 }
 
 async function confirmRepost(postId) {
+  const generation = authGeneration;
   const account = activeAccount();
   const confirmation = state.repostConfirm;
   const post = state.posts.find((entry) => entry.id === postId && isVisibleFanPost(entry));
@@ -2491,6 +2550,7 @@ async function confirmRepost(postId) {
   render();
   try {
     await persistAction('repost.toggle', { postId });
+    if (generation !== authGeneration) return;
     state.repostStatus = {
       userId: account.id,
       postId,
@@ -2498,6 +2558,7 @@ async function confirmRepost(postId) {
       message: confirmation.action === 'create' ? 'Repost added to your profile.' : 'Your repost was removed.',
     };
   } catch (error) {
+    if (generation !== authGeneration) return;
     state.repostStatus = {
       userId: account.id,
       postId,
@@ -2505,6 +2566,7 @@ async function confirmRepost(postId) {
       message: error.message || 'This repost could not be completed.',
     };
   } finally {
+    if (generation !== authGeneration) return;
     state.repostPending = null;
     state.repostTimer = null;
     render();
@@ -2512,6 +2574,7 @@ async function confirmRepost(postId) {
 }
 
 async function saveCurrentPostDraft() {
+  const generation = authGeneration;
   const editor = state.postEditor;
   const account = activeAccount();
   const draft = editor && state.postDrafts[editor.key];
@@ -2525,18 +2588,22 @@ async function saveCurrentPostDraft() {
       content: draft.content || '',
       mediaAssetId: draft.media?.assetId || null,
     });
+    if (generation !== authGeneration) return;
     state.postEditor = null;
     state.postErrors[editor.key] = '';
     state.postStatus = { boardId: editor.boardId, userId: account.id, message: 'Draft saved.' };
   } catch (error) {
+    if (generation !== authGeneration) return;
     state.postErrors[editor.key] = error.message || 'Your draft could not be saved.';
   } finally {
+    if (generation !== authGeneration) return;
     state.postPublishing = false;
     render();
   }
 }
 
 async function discardPostDraft(authorId, boardId, postId = null) {
+  const generation = authGeneration;
   const key = postDraftKey(authorId, boardId, postId);
   const draft = state.postDrafts[key];
   if (state.postPublishing) return;
@@ -2544,20 +2611,24 @@ async function discardPostDraft(authorId, boardId, postId = null) {
   render();
   try {
     await persistAction('draft.delete', { boardId, postId });
+    if (generation !== authGeneration) return;
     releaseDraftMedia(draft);
     delete state.postDrafts[key];
     delete state.postErrors[key];
     if (state.postEditor?.key === key) state.postEditor = null;
     state.postStatus = { boardId, userId: authorId, message: 'Draft discarded.' };
   } catch (error) {
+    if (generation !== authGeneration) return;
     state.postErrors[key] = error.message || 'Your draft could not be discarded.';
   } finally {
+    if (generation !== authGeneration) return;
     state.postPublishing = false;
     render();
   }
 }
 
 async function deletePost(postId) {
+  const generation = authGeneration;
   const account = activeAccount();
   const post = state.posts.find((entry) => entry.id === postId);
   if (!account || account.role !== 'Fan' || !post || post.authorId !== account.id
@@ -2569,7 +2640,9 @@ async function deletePost(postId) {
   render();
   try {
     await persistAction('post.delete', { postId });
+    if (generation !== authGeneration) return;
   } catch (error) {
+    if (generation !== authGeneration) return;
     state.postPublishing = false;
     state.postStatus = { boardId: post.boardId, userId: account.id, kind: 'error', message: error.message || 'This post could not be deleted.' };
     render();
@@ -2611,6 +2684,7 @@ async function deletePost(postId) {
 }
 
 async function submitPost(form) {
+  const generation = authGeneration;
   const account = activeAccount();
   const board = state.boards.find((entry) => entry.id === form.dataset.boardId);
   const postId = form.dataset.postId || null;
@@ -2650,13 +2724,13 @@ async function submitPost(form) {
   state.postPublishing = true;
   render();
   try {
-    const data = await runAction('post.save', {
+    await persistAction('post.save', {
       postId: existing?.id || null,
       boardId: board.id,
       content: content.trim(),
       mediaAssetId: draft.media?.assetId || null,
     });
-    applyBootstrap(data);
+    if (generation !== authGeneration) return;
     delete state.postDrafts[key];
     delete state.postErrors[key];
     if (state.postEditor?.key === key) state.postEditor = null;
@@ -2667,8 +2741,10 @@ async function submitPost(form) {
     };
     state.homeTab = 'for-you';
   } catch (error) {
+    if (generation !== authGeneration) return;
     state.postErrors[key] = error.message || 'Your post could not be published.';
   } finally {
+    if (generation !== authGeneration) return;
     state.postPublishing = false;
     state.pendingPost = null;
     state.postTimer = null;

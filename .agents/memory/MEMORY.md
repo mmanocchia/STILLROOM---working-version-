@@ -1,2 +1,3 @@
 - [Stillroom scope](stillroom-scope.md) — Real Clerk/PostgreSQL/storage is approved; preserve the vanilla client, privacy rules, and truthful empty content.
 - [Clerk test identity cleanup](clerk-test-identities.md) — Requested test-login claims are not verified provider account details; verify provenance before provider-user deletion.
+- [Async session boundaries](session-boundaries.md) — Ignore old-session success, error, and cleanup handlers; snapshot guards alone do not isolate account editors.
