@@ -60,6 +60,8 @@ export const CreateStillroomProfileResponse = zod.object({
 /**
  * @summary Read public content and only the current member's private data
  */
+export const getStillroomBootstrapQueryCursorMax = 8192;
+
 export const getStillroomBootstrapQueryPageDefault = 0;
 export const getStillroomBootstrapQueryPageMin = 0;
 export const getStillroomBootstrapQueryPageMax = 50000;
@@ -75,6 +77,8 @@ export const getStillroomBootstrapQueryQMax = 200;
 
 
 export const GetStillroomBootstrapQueryParams = zod.object({
+  "view": zod.enum(['feed', 'explore']).optional(),
+  "cursor": zod.coerce.string().max(getStillroomBootstrapQueryCursorMax).optional(),
   "page": zod.coerce.number().int().min(getStillroomBootstrapQueryPageMin).max(getStillroomBootstrapQueryPageMax).default(getStillroomBootstrapQueryPageDefault),
   "boardId": zod.coerce.string().uuid().optional(),
   "authorId": zod.coerce.string().max(getStillroomBootstrapQueryAuthorIdMax).optional(),
@@ -92,7 +96,13 @@ export const GetStillroomBootstrapResponse = zod.object({
   "pagination": zod.object({
   "page": zod.number().int(),
   "pageSize": zod.number().int(),
-  "hasMore": zod.boolean()
+  "hasMore": zod.boolean(),
+  "nextCursor": zod.string().nullish()
+}).optional(),
+  "discovery": zod.object({
+  "artistIds": zod.array(zod.string()),
+  "boardIds": zod.array(zod.string()),
+  "postIds": zod.array(zod.string())
 }).optional(),
   "userId": zod.string().nullable(),
   "profileId": zod.string().nullable(),
@@ -120,6 +130,8 @@ export const GetStillroomBootstrapResponse = zod.object({
 /**
  * @summary Perform an authenticated role- and ownership-checked social action
  */
+export const runStillroomActionQueryCursorMax = 8192;
+
 export const runStillroomActionQueryPageDefault = 0;
 export const runStillroomActionQueryPageMin = 0;
 export const runStillroomActionQueryPageMax = 50000;
@@ -135,6 +147,8 @@ export const runStillroomActionQueryQMax = 200;
 
 
 export const RunStillroomActionQueryParams = zod.object({
+  "view": zod.enum(['feed', 'explore']).optional(),
+  "cursor": zod.coerce.string().max(runStillroomActionQueryCursorMax).optional(),
   "page": zod.coerce.number().int().min(runStillroomActionQueryPageMin).max(runStillroomActionQueryPageMax).default(runStillroomActionQueryPageDefault),
   "boardId": zod.coerce.string().uuid().optional(),
   "authorId": zod.coerce.string().max(runStillroomActionQueryAuthorIdMax).optional(),
@@ -157,7 +171,13 @@ export const RunStillroomActionResponse = zod.object({
   "pagination": zod.object({
   "page": zod.number().int(),
   "pageSize": zod.number().int(),
-  "hasMore": zod.boolean()
+  "hasMore": zod.boolean(),
+  "nextCursor": zod.string().nullish()
+}).optional(),
+  "discovery": zod.object({
+  "artistIds": zod.array(zod.string()),
+  "boardIds": zod.array(zod.string()),
+  "postIds": zod.array(zod.string())
 }).optional(),
   "userId": zod.string().nullable(),
   "profileId": zod.string().nullable(),

@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   index,
   integer,
@@ -28,7 +29,12 @@ export const profiles = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (table) => [uniqueIndex("stillroom_profiles_username_key").on(table.usernameKey)],
+  (table) => [
+    uniqueIndex("stillroom_profiles_username_key").on(table.usernameKey),
+    index("stillroom_profiles_role_created_id_idx").on(table.role, table.createdAt, table.id),
+    index("stillroom_profiles_discovery_search_idx").using("gin",
+      sql`to_tsvector('simple', (${table.displayName} || ' ' || ${table.username} || ' ' || ${table.biography}))`),
+  ],
 );
 
 export const artistBoards = pgTable(
@@ -48,6 +54,9 @@ export const artistBoards = pgTable(
   (table) => [
     uniqueIndex("stillroom_artist_boards_owner_unique").on(table.ownerId),
     index("stillroom_artist_boards_created_at_idx").on(table.createdAt),
+    index("stillroom_artist_boards_created_id_idx").on(table.createdAt, table.id),
+    index("stillroom_artist_boards_discovery_search_idx").using("gin",
+      sql`to_tsvector('simple', (${table.artistName} || ' ' || ${table.discipline} || ' ' || ${table.biography}))`),
   ],
 );
 
@@ -97,6 +106,8 @@ export const posts = pgTable(
       table.publishedAt,
     ),
     index("stillroom_posts_published_id_idx").on(table.publishedAt, table.id),
+    index("stillroom_posts_board_published_id_idx").on(table.boardId, table.publishedAt, table.id),
+    index("stillroom_posts_discovery_search_idx").using("gin", sql`to_tsvector('simple', ${table.content})`),
   ],
 );
 

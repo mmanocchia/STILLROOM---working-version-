@@ -10,4 +10,6 @@ export type StillroomBootstrapPagination = {
   page: number;
   pageSize: number;
   hasMore: boolean;
+  /** @nullable */
+  nextCursor?: string | null;
 };

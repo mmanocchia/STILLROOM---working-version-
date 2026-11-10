@@ -8,8 +8,14 @@
 import type { GetStillroomBootstrapCategory } from './getStillroomBootstrapCategory';
 import type { GetStillroomBootstrapFollowed } from './getStillroomBootstrapFollowed';
 import type { GetStillroomBootstrapMine } from './getStillroomBootstrapMine';
+import type { GetStillroomBootstrapView } from './getStillroomBootstrapView';
 
 export type GetStillroomBootstrapParams = {
+view?: GetStillroomBootstrapView;
+/**
+ * @maxLength 8192
+ */
+cursor?: string;
 /**
  * @minimum 0
  * @maximum 50000

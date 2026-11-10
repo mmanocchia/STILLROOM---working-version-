@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
+import { appendPublicSnapshot, PUBLIC_WINDOW_LIMIT } from '../src/publicContent.js';
 
 // Exercise the actual vanilla SPA handlers without starting Clerk or a server.
 const source = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8')
@@ -32,6 +33,8 @@ function harness() {
     clerk: null,
     runAction: () => request,
     getBootstrap: () => request,
+    appendPublicSnapshot,
+    PUBLIC_WINDOW_LIMIT,
   });
   vm.runInContext(source, context);
   vm.runInContext(`
@@ -108,6 +111,54 @@ test('content selection follows Board, post, profile, private-follow and Shelf r
   assert.equal(h.run('contentSelection().postId'), 'post-id');
 });
 
+test('Feed stays newest-first and My Artists filters Boards without popularity signals', () => {
+  const h = harness();
+  h.run(`
+    state.boards.push({ id: 'other-board', ownerId: 'other-artist' });
+    state.accounts.push({ id: 'other-artist', role: 'Artist' });
+    state.posts = [
+      { id: 'newest', authorId: 'fan', boardId: 'other-board', publishedAt: 3 },
+      { id: 'middle', authorId: 'fan', boardId: 'board', publishedAt: 2 },
+      { id: 'oldest', authorId: 'fan', boardId: 'board', publishedAt: 1 }
+    ];
+  `);
+  assert.equal(h.run(`homeFeedItems().map(item => item.post.id).join(',')`), 'newest,middle,oldest');
+  assert.equal(h.run(`homeFeedItems(new Set(['artist'])).map(item => item.post.id).join(',')`), 'middle,oldest');
+  assert.equal(h.run(`homeFeedItems(new Set()).length`), 0);
+});
+
+test('public view requests carry cursor context and visitors get a My Artists sign-in prompt', () => {
+  const h = harness();
+  h.run(`state.route = '/home'; state.contentCursor = 'cursor-token';`);
+  assert.equal(h.run('contentSelection().view'), 'feed');
+  assert.equal(h.run('contentSelection().cursor'), 'cursor-token');
+  h.run(`state.route = '/explore'; state.exploreQuery = '@name'; state.exploreDiscipline = 'Music';`);
+  assert.equal(h.run('contentSelection().view'), 'explore');
+  assert.equal(h.run('contentSelection().q'), '@name');
+  assert.equal(h.run('contentSelection().category'), 'Music');
+  h.run(`state.route = '/home'; state.contentCursor = null; state.activeAccountId = null; state.authUserId = null; state.homeTab = 'my-artists';`);
+  assert.match(h.run('renderHome()'), /href="\/login" data-route="\/login">Sign In/);
+});
+
+test('Load More applies an additional page but ignores responses after a filter change', async () => {
+  const h = harness();
+  h.context.clerk = { loaded: true };
+  h.run(`state.contentCursor = 'cursor-token'; state.posts = [{ id: 'one', boardId: 'board', authorId: 'fan' }];`);
+  const pending = h.run('refreshPublicContent({ append: true })');
+  h.resolve({ userId: 'fan', profileId: 'fan', accounts: [{ id: 'fan', role: 'Fan' }],
+    posts: [{ id: 'two', boardId: 'board', authorId: 'fan' }], boards: [{ id: 'board', ownerId: 'artist' }] });
+  await pending;
+  assert.equal(h.run(`state.posts.map(post => post.id).join(',')`), 'one,two');
+  const other = harness();
+  other.context.clerk = { loaded: true };
+  other.run(`state.contentCursor = 'cursor-token';`);
+  const stale = other.run('refreshPublicContent({ append: true })');
+  other.run(`state.homeTab = 'my-artists'; state.contentCursor = null;`);
+  other.resolve({ userId: 'fan', profileId: 'fan', posts: [{ id: 'wrong-feed' }] });
+  await stale;
+  assert.equal(other.run('state.posts.length'), 0);
+});
+
 test('a public refresh replaces its post page instead of accumulating all posts', async () => {
   const h = harness();
   h.context.clerk = { loaded: true };
@@ -132,6 +183,19 @@ test('a public refresh cannot apply a result after switching accounts', async ()
   h.resolve(fanResponse);
   await pending;
   assert.equal(h.snapshot(), before);
+});
+
+test('a completed mutation cannot replace a newly selected feed with its old view snapshot', async () => {
+  const h = harness();
+  h.context.clerk = { loaded: true };
+  h.run(`state.route = '/board/board';`);
+  const pending = h.run(`persistAction('follow.toggle', { artistId: 'board' })`);
+  h.run(`state.route = '/home'; state.homeTab = 'my-artists';`);
+  h.context.getBootstrap = async () => ({ userId: 'fan', profileId: 'fan',
+    accounts: [{ id: 'fan', role: 'Fan' }], posts: [{ id: 'current-view' }] });
+  h.resolve({ userId: 'fan', profileId: 'fan', posts: [{ id: 'old-view' }] });
+  await pending;
+  assert.equal(h.run('state.posts[0].id'), 'current-view');
 });
 
 const fanResponse = {

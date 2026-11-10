@@ -4,6 +4,8 @@ import { Router, type IRouter, type Request } from "express";
 import { z } from "zod";
 import { changeUsernameSchema } from "../lib/profileValidation";
 import { contentPageSchema, PAGE_SIZE, pageWindow, type ContentPage } from "../lib/contentPage";
+import { readPublicDiscovery } from "../lib/publicDiscovery";
+import { discoveryScope, readDiscoveryCursor, DiscoveryCursorError } from "../lib/discoveryCursor";
 import {
   artistBoards,
   comments,
@@ -76,6 +78,7 @@ async function requireOwnedMedia(assetId: string | null, ownerId: string, imageO
 }
 
 async function getBootstrap(userId: string | null, selection: ContentPage = { page: 0 }) {
+  const publicPage = selection.view ? await readPublicDiscovery(selection, userId) : null;
   const conditions = [];
   if (selection.mine) conditions.push(userId
     ? or(eq(posts.authorId, userId), inArray(posts.boardId,
@@ -118,27 +121,33 @@ async function getBootstrap(userId: string | null, selection: ContentPage = { pa
           ilike(artistBoards.discipline, pattern), ilike(profiles.username, pattern),
           ilike(profiles.displayName, pattern))))));
   }
-  const page = pageWindow(await db.select().from(posts).where(and(...conditions))
+  const page = publicPage ? { rows: publicPage.posts, pagination: publicPage.pagination } : pageWindow(await db.select().from(posts).where(and(...conditions))
     .orderBy(desc(posts.publishedAt), desc(posts.id))
     .limit(PAGE_SIZE + 1).offset(selection.page * PAGE_SIZE), selection.page);
   const postRows = page.rows;
   const postIds = postRows.map((post) => post.id);
-  const [profileRows, boardRows, repostRows, commentRows, shelfRows] =
+  const [loadedProfiles, boardRows, repostRows, commentRows, shelfRows] =
     await Promise.all([
-      db.select().from(profiles).orderBy(asc(profiles.createdAt)),
-      db.select().from(artistBoards).orderBy(desc(artistBoards.createdAt)),
+      publicPage ? publicPage.profiles : db.select().from(profiles).orderBy(asc(profiles.createdAt)),
+      publicPage ? publicPage.boards : db.select().from(artistBoards).orderBy(desc(artistBoards.createdAt)),
       postIds.length ? db.select().from(reposts).where(inArray(reposts.postId, postIds)).orderBy(asc(reposts.repostedAt)) : Promise.resolve([] as (typeof reposts.$inferSelect)[]),
       postIds.length ? db.select().from(comments).where(inArray(comments.postId, postIds)).orderBy(asc(comments.createdAt)) : Promise.resolve([] as (typeof comments.$inferSelect)[]),
       db
         .select()
         .from(shelves)
         .where(
-          userId
+          publicPage ? userId ? eq(shelves.ownerId, userId) : sql`false` : userId
             ? or(eq(shelves.visibility, "public"), eq(shelves.ownerId, userId))
             : eq(shelves.visibility, "public"),
         )
         .orderBy(desc(shelves.createdAt)),
     ]);
+
+  const knownProfiles = new Set(loadedProfiles.map((profile) => profile.id));
+  const neededProfiles = [...new Set([...commentRows.map((comment) => comment.authorId),
+    ...repostRows.map((repost) => repost.userId)])].filter((id) => !knownProfiles.has(id));
+  const profileRows = [...loadedProfiles, ...(neededProfiles.length
+    ? await db.select().from(profiles).where(inArray(profiles.id, neededProfiles)) : [])];
 
   const assetIds = [...new Set([
     ...profileRows.map((row) => row.profileImageAssetId),
@@ -146,7 +155,9 @@ async function getBootstrap(userId: string | null, selection: ContentPage = { pa
     ...postRows.map((row) => row.mediaAssetId),
   ].filter((id): id is string => Boolean(id)))];
   const mediaRows = await db.select().from(mediaAssets).where(and(eq(mediaAssets.status, "ready"),
-    userId ? or(inArray(mediaAssets.id, assetIds), eq(mediaAssets.ownerId, userId)) : inArray(mediaAssets.id, assetIds)));
+    userId ? or(inArray(mediaAssets.id, assetIds), inArray(mediaAssets.id,
+      db.select({ id: savedPostDrafts.mediaAssetId }).from(savedPostDrafts).where(eq(savedPostDrafts.authorId, userId))))
+      : inArray(mediaAssets.id, assetIds)));
 
   const accountById = new Map(profileRows.map((profile) => [profile.id, profile]));
   const mediaById = new Map(mediaRows.map((asset) => [asset.id, asset]));
@@ -231,6 +242,7 @@ async function getBootstrap(userId: string | null, selection: ContentPage = { pa
 
   return {
     pagination: page.pagination,
+    ...(publicPage ? { discovery: publicPage.discovery } : {}),
     userId,
     profileId: userId && accountById.has(userId) ? userId : null,
     accounts: presentedProfiles,
@@ -276,7 +288,15 @@ router.get("/social/bootstrap", async (req, res): Promise<void> => {
     return;
   }
   const userId = currentUserId(req);
-  res.json(await getBootstrap(userId, selection.data));
+  try {
+    res.json(await getBootstrap(userId, selection.data));
+  } catch (error) {
+    if (error instanceof DiscoveryCursorError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
+    throw error;
+  }
 });
 
 router.post("/social/actions", async (req, res): Promise<void> => {
@@ -294,6 +314,7 @@ router.post("/social/actions", async (req, res): Promise<void> => {
   const userId = currentUserId(req);
   try {
     const profile = await requireProfile(userId);
+    if (selection.data.view) readDiscoveryCursor(selection.data.cursor, discoveryScope(selection.data, userId));
     const payload = parsed.data.payload;
 
     switch (parsed.data.action) {
@@ -521,6 +542,10 @@ router.post("/social/actions", async (req, res): Promise<void> => {
 
     res.json(await getBootstrap(userId, selection.data));
   } catch (error) {
+    if (error instanceof DiscoveryCursorError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: "Some submitted information is invalid." });
       return;

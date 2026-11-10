@@ -118,6 +118,14 @@ export type StillroomBootstrapPagination = {
   page: number;
   pageSize: number;
   hasMore: boolean;
+  /** @nullable */
+  nextCursor?: string | null;
+};
+
+export type StillroomBootstrapDiscovery = {
+  artistIds: string[];
+  boardIds: string[];
+  postIds: string[];
 };
 
 export type StillroomBootstrapFollowedArtistsByFan = {[key: string]: string[]};
@@ -126,6 +134,7 @@ export type StillroomBootstrapPostDrafts = {[key: string]: SocialRecord};
 
 export interface StillroomBootstrap {
   pagination?: StillroomBootstrapPagination;
+  discovery?: StillroomBootstrapDiscovery;
   /** @nullable */
   userId: string | null;
   /** @nullable */
@@ -159,6 +168,11 @@ export type CreateStillroomProfile201 = {
 };
 
 export type GetStillroomBootstrapParams = {
+view?: GetStillroomBootstrapView;
+/**
+ * @maxLength 8192
+ */
+cursor?: string;
 /**
  * @minimum 0
  * @maximum 50000
@@ -188,6 +202,14 @@ q?: string;
 category?: GetStillroomBootstrapCategory;
 };
 
+export type GetStillroomBootstrapView = typeof GetStillroomBootstrapView[keyof typeof GetStillroomBootstrapView];
+
+
+export const GetStillroomBootstrapView = {
+  feed: 'feed',
+  explore: 'explore',
+} as const;
+
 export type GetStillroomBootstrapMine = typeof GetStillroomBootstrapMine[keyof typeof GetStillroomBootstrapMine];
 
 
@@ -215,6 +237,11 @@ export const GetStillroomBootstrapCategory = {
 } as const;
 
 export type RunStillroomActionParams = {
+view?: RunStillroomActionView;
+/**
+ * @maxLength 8192
+ */
+cursor?: string;
 /**
  * @minimum 0
  * @maximum 50000
@@ -243,6 +270,14 @@ followed?: RunStillroomActionFollowed;
 q?: string;
 category?: RunStillroomActionCategory;
 };
+
+export type RunStillroomActionView = typeof RunStillroomActionView[keyof typeof RunStillroomActionView];
+
+
+export const RunStillroomActionView = {
+  feed: 'feed',
+  explore: 'explore',
+} as const;
 
 export type RunStillroomActionMine = typeof RunStillroomActionMine[keyof typeof RunStillroomActionMine];
 

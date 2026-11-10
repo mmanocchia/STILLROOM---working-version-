@@ -8,8 +8,14 @@
 import type { RunStillroomActionCategory } from './runStillroomActionCategory';
 import type { RunStillroomActionFollowed } from './runStillroomActionFollowed';
 import type { RunStillroomActionMine } from './runStillroomActionMine';
+import type { RunStillroomActionView } from './runStillroomActionView';
 
 export type RunStillroomActionParams = {
+view?: RunStillroomActionView;
+/**
+ * @maxLength 8192
+ */
+cursor?: string;
 /**
  * @minimum 0
  * @maximum 50000

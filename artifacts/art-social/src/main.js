@@ -1,4 +1,5 @@
 import './index.css';
+import { appendPublicSnapshot, PUBLIC_WINDOW_LIMIT } from './publicContent.js';
 import { createProfile, getBootstrap, runAction, uploadFile } from './api.js';
 import { clerk, clerkAppearance, loadClerk } from './clerk.js';
 
@@ -29,6 +30,8 @@ const state = {
   authNotice: null,
   dataLoading: true,
   contentPage: 0,
+  contentCursor: null,
+  discovery: null,
   contentRefreshing: false,
   contentRefreshError: '',
   contentPagination: { page: 0, pageSize: 20, hasMore: false },
@@ -128,6 +131,8 @@ let authGeneration = 0;
 
 function clearAccountEditors() {
   state.contentPage = 0;
+  state.contentCursor = null;
+  state.discovery = null;
   state.contentPagination = { page: 0, pageSize: 20, hasMore: false };
   state.contentRefreshError = '';
   state.contentRefreshing = false;
@@ -260,7 +265,12 @@ function hrefFor(path) {
   return `${basePath}${path === '/' ? '/' : path}`;
 }
 
-function applyBootstrap(data) {
+function applyBootstrap(data, { append = false } = {}) {
+  if (append) data = appendPublicSnapshot({
+    userId: state.authUserId, profileId: state.activeAccountId,
+    posts: state.posts, boards: state.boards, accounts: state.accounts,
+    comments: state.comments, reposts: state.reposts, discovery: state.discovery,
+  }, data);
   if (state.activeAccountId !== (data.profileId || null)) clearAccountEditors();
   const localDrafts = data.profileId && state.activeAccountId === data.profileId
     ? state.postDrafts
@@ -269,6 +279,7 @@ function applyBootstrap(data) {
   state.accounts = data.accounts || [];
   state.boards = data.boards || [];
   state.posts = data.posts || [];
+  state.discovery = data.discovery || null;
   state.contentPagination = data.pagination || { page: 0, pageSize: 20, hasMore: false };
   state.comments = data.comments || [];
   state.reposts = data.reposts || [];
@@ -357,11 +368,19 @@ async function syncSession() {
 }
 
 async function persistAction(action, payload = {}) {
+  // Mutations replace the snapshot: discard accumulated public cursors first.
+  if (['/', '/home', '/explore'].includes(state.route)) state.contentCursor = null;
   contentRefreshId += 1;
   state.contentRefreshing = false;
   const generation = authGeneration;
-  const data = await runAction(action, payload, contentSelection());
+  const selection = contentSelection();
+  const selectionKey = JSON.stringify(selection);
+  const data = await runAction(action, payload, selection);
   if (generation !== authGeneration) throw new Error('Your session changed. Please sign in and try again.');
+  if (selectionKey !== JSON.stringify(contentSelection())) {
+    await refreshPublicContent();
+    return data;
+  }
   applyBootstrap(data);
   render();
   return data;
@@ -421,15 +440,23 @@ function navigate(path, { replace = false } = {}) {
   if (replace) history.replaceState({}, '', hrefFor(path));
   else if (getRoute() !== path) history.pushState({}, '', hrefFor(path));
   state.route = path;
-  render();
   if (changed) {
     state.contentPage = 0;
+    state.contentCursor = null;
+  }
+  render();
+  if (changed) {
     void refreshPublicContent();
   }
 }
 
 function contentSelection() {
   const selection = { page: state.contentPage || 0 };
+  if (['/', '/home', '/explore'].includes(state.route)) {
+    selection.page = 0;
+    selection.view = state.route === '/explore' ? 'explore' : 'feed';
+    if (state.contentCursor) selection.cursor = state.contentCursor;
+  }
   const parts = state.route.split('/').map((part) => {
     try { return decodeURIComponent(part); } catch { return part; }
   });
@@ -452,18 +479,18 @@ function contentSelection() {
 }
 
 let contentRefreshId = 0;
-async function refreshPublicContent({ background = false } = {}) {
+async function refreshPublicContent({ background = false, append = false } = {}) {
   // Never replace an editor, a pending mutation, or an authentication form.
   if (state.authLoading || syncInFlight || !clerk?.loaded) return;
   const selection = contentSelection();
   const key = JSON.stringify(selection);
   const generation = authGeneration;
   const requestId = ++contentRefreshId;
-  if (!background) { state.contentRefreshing = true; render(); }
+  if (!background) { state.contentRefreshing = true; renderPublicContent(); }
   try {
     const data = await getBootstrap(selection);
     if (generation !== authGeneration || requestId !== contentRefreshId || key !== JSON.stringify(contentSelection())) return;
-    applyBootstrap(data);
+    applyBootstrap(data, { append });
     state.contentRefreshError = '';
   } catch (error) {
     if (generation !== authGeneration || requestId !== contentRefreshId || key !== JSON.stringify(contentSelection())) return;
@@ -471,8 +498,21 @@ async function refreshPublicContent({ background = false } = {}) {
   } finally {
     if (generation === authGeneration && requestId === contentRefreshId) {
       state.contentRefreshing = false;
-      if (!background || !publicEditorActive()) render();
+      if (!background || !publicEditorActive()) renderPublicContent();
     }
+  }
+}
+
+function renderPublicContent() {
+  const search = app.querySelector('[data-explore-search]');
+  const focused = search && document.activeElement === search;
+  const start = focused ? search.selectionStart : null;
+  const end = focused ? search.selectionEnd : null;
+  render();
+  if (focused && state.route === '/explore') {
+    const next = app.querySelector('[data-explore-search]');
+    next?.focus({ preventScroll: true });
+    if (start !== null) next?.setSelectionRange(start, end);
   }
 }
 
@@ -484,6 +524,17 @@ function publicEditorActive() {
 }
 
 function renderContentPagination() {
+  if (['/', '/home', '/explore'].includes(state.route)) {
+    const pending = state.contentRefreshing || state.postPublishing || state.repostPending || state.commentPending || state.shelfLoading;
+    const hasMore = state.contentPagination?.hasMore && state.contentPagination?.nextCursor;
+    if (!hasMore && !state.contentRefreshing && !state.contentRefreshError && !state.contentCursor) return '';
+    return `<nav class="content-pagination" aria-label="More public content">
+      ${state.contentRefreshError ? `<p class="inline-error" role="alert">${escapeHTML(state.contentRefreshError)}</p>` : ''}
+      ${state.posts.length >= PUBLIC_WINDOW_LIMIT ? `<span role="status">Showing the last ${PUBLIC_WINDOW_LIMIT} loaded posts.</span>` : ''}
+      ${hasMore ? `<button class="quiet-button" type="button" data-action="load-public-more" ${pending ? 'disabled' : ''}>${state.contentRefreshing ? 'Loading…' : 'Load More'}</button>` : state.contentRefreshing ? '<span role="status">Loading…</span>' : ''}
+      ${state.contentCursor || state.contentRefreshError ? `<button class="text-button" type="button" data-action="refresh-public-content" ${pending ? 'disabled' : ''}>${state.contentRefreshError ? 'Try again' : 'Back to newest'}</button>` : ''}
+    </nav>`;
+  }
   if (!['/home', '/explore', '/profile'].includes(state.route)
     && !/^\/(?:board|profile|shelves)\/[^/]+$/.test(state.route)) return '';
   if (state.route.startsWith('/profile') && state.profileActivityTabs[state.route.split('/')[2] || state.activeAccountId] === 'shelves') return '';
@@ -560,7 +611,7 @@ function homeFeedItems(followedIds = null) {
       const board = state.boards.find((entry) => entry.id === item.post.boardId);
       return board && followedIds.has(board.ownerId);
     })
-    .sort((left, right) => left.createdAt - right.createdAt);
+    .sort((left, right) => right.createdAt - left.createdAt);
 }
 
 function accountActivityItems(accountId) {
@@ -608,6 +659,14 @@ function exploreTextMatches(query, values) {
 }
 
 function exploreResults() {
+  if (state.discovery) {
+    const posts = new Set(state.discovery.postIds);
+    return {
+      artists: state.discovery.artistIds.map((id) => state.accounts.find((account) => account.id === id)).filter(Boolean),
+      boards: state.discovery.boardIds.map((id) => state.boards.find((board) => board.id === id)).filter(Boolean),
+      posts: state.posts.filter((post) => posts.has(post.id) && isVisibleFanPost(post)),
+    };
+  }
   const query = state.exploreQuery;
   const discipline = state.exploreDiscipline;
   const boards = state.boards
@@ -971,7 +1030,7 @@ function renderHome() {
   } else if (selected) {
     content = `${renderEmpty('Artists make the space. Fans fill it with stories.')}<div class="home-empty-explore"><a class="quiet-button" href="${hrefFor('/explore')}" data-route="/explore">Explore Artists ${icon('arrow', 14)}</a></div>`;
   } else if (!account) {
-    content = `${renderEmpty('Join to make this feed yours.', 'Your My Artists feed is private to your account.')}<div class="empty-action"><button class="quiet-button" type="button" data-action="join" data-role="Fan">Join as Fan ${icon('arrow', 14)}</button></div>`;
+    content = `${renderEmpty('Join to make this feed yours.', 'Your My Artists feed is private to your account.')}<div class="empty-action"><a class="quiet-button" href="${hrefFor('/login')}" data-route="/login">Sign In</a><button class="quiet-button" type="button" data-action="join" data-role="Fan">Join as Fan ${icon('arrow', 14)}</button></div>`;
   } else if (!hasFollowedArtists) {
     const title = account?.role === 'Fan' ? "You haven't connected with any artists yet." : 'No artists in My Artists yet.';
     const copy = account?.role === 'Fan' ? 'Follow an artist from their board to see posts here.' : 'My Artists is a private list available to Fan accounts.';
@@ -1192,7 +1251,7 @@ function renderExploreError() {
 
 function renderExploreResults() {
   if (state.exploreError) return renderExploreError();
-  if (state.exploreLoading) {
+  if (state.exploreLoading || (state.contentRefreshing && !state.contentCursor)) {
     return `<div class="explore-feedback explore-loading" role="status" aria-live="polite"><span class="loading-dot"></span>Searching your Stillroom…</div>`;
   }
   const { artists, boards, posts } = exploreResults();
@@ -1200,11 +1259,11 @@ function renderExploreResults() {
   if (!total) {
     const hasCriteria = state.exploreQuery.trim() || state.exploreDiscipline !== 'all';
     if (!hasCriteria) return renderEmpty('Nothing to discover yet.', 'Artist profiles, boards, and Fan posts will appear here when they’re created.');
-    return `<div class="explore-no-results">${renderEmpty('No results found.', 'Try another search or clear the selected discipline.')}<div class="empty-action"><button class="quiet-button" type="button" data-action="reset-explore">Reset search and filters</button></div></div>`;
+    return `<div class="explore-no-results">${renderEmpty('No results found.', 'Try another search or clear the selected category.')}<div class="empty-action"><button class="quiet-button" type="button" data-action="reset-explore">Reset search and filters</button></div></div>`;
   }
 
   const countLine = `${artists.length} ${artists.length === 1 ? 'artist' : 'artists'} · ${boards.length} ${boards.length === 1 ? 'board' : 'boards'} · ${posts.length} ${posts.length === 1 ? 'post' : 'posts'}`;
-  return `<p class="explore-result-count" role="status">${countLine}</p>
+  return `<p class="explore-result-count" role="status">Loaded: ${countLine}</p>
     ${artists.length ? `<section class="explore-result-section"><h2 class="section-heading">Artists</h2><div class="explore-artist-list">${artists.map(renderExploreArtist).join('')}</div></section>` : ''}
     ${boards.length ? `<section class="explore-result-section"><h2 class="section-heading">${state.exploreQuery.trim() || state.exploreDiscipline !== 'all' ? 'Artist Boards' : 'Recently created boards'}</h2><div class="board-grid">${boards.map(renderBoardCard).join('')}</div></section>` : ''}
     ${posts.length ? `<section class="explore-result-section"><h2 class="section-heading">${state.exploreQuery.trim() || state.exploreDiscipline !== 'all' ? 'Fan Posts' : 'Recent posts'}</h2><div class="explore-post-list">${posts.map(renderExplorePost).join('')}</div></section>` : ''}`;
@@ -1223,6 +1282,7 @@ function queueExploreSearch() {
     state.exploreTimer = null;
     state.exploreLoading = false;
     state.contentPage = 0;
+    state.contentCursor = null;
     void refreshPublicContent();
     try {
       const latestResults = app.querySelector('#explore-results');
@@ -1249,6 +1309,7 @@ function resetExplore() {
   state.exploreLoading = false;
   state.exploreError = '';
   state.contentPage = 0;
+  state.contentCursor = null;
   render();
   void refreshPublicContent();
 }
@@ -3130,9 +3191,16 @@ app?.addEventListener('click', (event) => {
   }
 
   const action = target.dataset.action;
+  if (action === 'load-public-more') {
+    if (state.contentRefreshing || publicEditorActive() || !state.contentPagination?.nextCursor) return;
+    state.contentCursor = state.contentPagination.nextCursor;
+    void refreshPublicContent({ append: true });
+    return;
+  }
   if (action === 'content-page' || action === 'refresh-public-content') {
     if (state.contentRefreshing || publicEditorActive()) return;
     state.contentPage = action === 'content-page' ? Number(target.dataset.page) : 0;
+    state.contentCursor = null;
     void refreshPublicContent();
     return;
   }
@@ -3190,6 +3258,7 @@ app?.addEventListener('click', (event) => {
   } else if (action === 'home-tab') {
     state.homeTab = target.dataset.tab;
     state.contentPage = 0;
+    state.contentCursor = null;
     void refreshPublicContent();
     render();
   } else if (action === 'toggle-comments') {
@@ -3388,6 +3457,7 @@ window.addEventListener('keydown', (event) => {
 });
 
 window.addEventListener('popstate', () => {
+  state.contentCursor = null;
   if (state.loading) cancelRegistration();
   if (state.boardLoading) cancelBoardOperation();
   if (state.shelfLoading) cancelShelfOperation();
@@ -3403,7 +3473,7 @@ window.addEventListener('popstate', () => {
 
 // Other browsers/sessions pick up new public contributions without signing in again.
 function refreshVisiblePublicContent() {
-  if (document.hidden || state.contentPage || publicEditorActive()
+  if (document.hidden || state.contentPage || state.contentCursor || publicEditorActive()
     || state.authLoading || state.dataLoading || state.contentRefreshing
     || ['/login', '/register', '/profile/setup', '/confirmation'].includes(state.route)) return;
   void refreshPublicContent({ background: true });

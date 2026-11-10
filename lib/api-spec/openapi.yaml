@@ -56,6 +56,8 @@ paths:
       operationId: getStillroomBootstrap
       summary: Read public content and only the current member's private data
       parameters: &contentPageParameters
+        - { in: query, name: view, schema: { type: string, enum: [feed, explore] } }
+        - { in: query, name: cursor, schema: { type: string, maxLength: 8192 } }
         - { in: query, name: page, schema: { type: integer, minimum: 0, maximum: 50000, default: 0 } }
         - { in: query, name: boardId, schema: { type: string, format: uuid } }
         - { in: query, name: authorId, schema: { type: string, maxLength: 200 } }
@@ -251,6 +253,14 @@ components:
             page: { type: integer }
             pageSize: { type: integer }
             hasMore: { type: boolean }
+            nextCursor: { type: [string, "null"] }
+        discovery:
+          type: object
+          required: [artistIds, boardIds, postIds]
+          properties:
+            artistIds: { type: array, items: { type: string } }
+            boardIds: { type: array, items: { type: string } }
+            postIds: { type: array, items: { type: string } }
         userId: { type: [string, "null"] }
         profileId: { type: [string, "null"] }
         accounts:
