@@ -6,35 +6,13 @@ import { Readable } from "stream";
 import { z } from "zod";
 import { artistBoards, db, mediaAssets, posts, profiles } from "@workspace/db";
 import { ObjectNotFoundError, ObjectStorageService } from "../lib/objectStorage";
+import { allowedUpload, hasMediaSignature } from "../lib/mediaValidation";
 
 const router = Router();
 const storage = new ObjectStorageService();
-const imageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
-const boardImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
-const videoTypes = new Set(["video/mp4", "video/webm"]);
 
 function userId(req: Request): string | null {
   return getAuth(req).userId ?? null;
-}
-
-function allowedUpload(
-  purpose: "profile" | "board" | "post",
-  contentType: string,
-  size: number,
-): boolean {
-  const isImage = (purpose === "profile" || purpose === "board"
-    ? boardImageTypes
-    : imageTypes).has(contentType);
-  const maxBytes =
-    purpose === "profile" || purpose === "board"
-      ? 4 * 1024 * 1024
-      : contentType.startsWith("video/")
-        ? 25 * 1024 * 1024
-        : 10 * 1024 * 1024;
-  return (isImage || (purpose === "post" && videoTypes.has(contentType)))
-    && Number.isSafeInteger(size)
-    && size > 0
-    && size <= maxBytes;
 }
 
 router.post("/storage/uploads/request-url", async (req, res): Promise<void> => {
@@ -118,6 +96,13 @@ router.post("/storage/uploads/complete", async (req, res): Promise<void> => {
       return;
     }
     if (!metadata.generation) throw new Error("Storage returned no object generation.");
+    // Read the verified generation, not a mutable signed-upload object.
+    const [header] = await file.bucket.file(file.name, { generation: metadata.generation })
+      .download({ start: 0, end: 63 });
+    if (!hasMediaSignature(header, actualType)) {
+      res.status(400).json({ error: "The uploaded file does not match a supported image or video format." });
+      return;
+    }
     const immutablePath = await storage.finalizeVerifiedUpload(file, String(metadata.generation));
     const [readyAsset] = await db.update(mediaAssets)
       .set({ status: "ready", objectPath: immutablePath })

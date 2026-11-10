@@ -55,16 +55,30 @@ paths:
     get:
       operationId: getStillroomBootstrap
       summary: Read public content and only the current member's private data
+      parameters: &contentPageParameters
+        - { in: query, name: page, schema: { type: integer, minimum: 0, maximum: 50000, default: 0 } }
+        - { in: query, name: boardId, schema: { type: string, format: uuid } }
+        - { in: query, name: authorId, schema: { type: string, maxLength: 200 } }
+        - { in: query, name: profileId, schema: { type: string, maxLength: 200 } }
+        - { in: query, name: mine, schema: { type: string, enum: ["true"] } }
+        - { in: query, name: repostsBy, schema: { type: string, maxLength: 200 } }
+        - { in: query, name: shelfId, schema: { type: string, format: uuid } }
+        - { in: query, name: postId, schema: { type: string, format: uuid } }
+        - { in: query, name: followed, schema: { type: string, enum: ["true"] } }
+        - { in: query, name: q, schema: { type: string, maxLength: 200 } }
+        - { in: query, name: category, schema: { type: string, enum: [Music, Film, Photography, Painting, Fashion, Other] } }
       responses:
         "200":
           description: Social data snapshot, never containing another member's private Shelves, follows, or drafts
           content:
             application/json:
               schema: { $ref: "#/components/schemas/StillroomBootstrap" }
+        "400": { $ref: "#/components/responses/ApiFailure" }
   /social/actions:
     post:
       operationId: runStillroomAction
       summary: Perform an authenticated role- and ownership-checked social action
+      parameters: *contentPageParameters
       requestBody:
         required: true
         content:
@@ -230,6 +244,13 @@ components:
       type: object
       required: [userId, profileId, accounts, boards, posts, comments, reposts, shelves, followedArtistsByFan, postDrafts]
       properties:
+        pagination:
+          type: object
+          required: [page, pageSize, hasMore]
+          properties:
+            page: { type: integer }
+            pageSize: { type: integer }
+            hasMore: { type: boolean }
         userId: { type: [string, "null"] }
         profileId: { type: [string, "null"] }
         accounts:

@@ -96,6 +96,7 @@ export const posts = pgTable(
       table.authorId,
       table.publishedAt,
     ),
+    index("stillroom_posts_published_id_idx").on(table.publishedAt, table.id),
   ],
 );
 

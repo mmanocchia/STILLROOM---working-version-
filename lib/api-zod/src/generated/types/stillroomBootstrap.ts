@@ -7,10 +7,12 @@
  */
 import type { SocialRecord } from './socialRecord';
 import type { StillroomBootstrapFollowedArtistsByFan } from './stillroomBootstrapFollowedArtistsByFan';
+import type { StillroomBootstrapPagination } from './stillroomBootstrapPagination';
 import type { StillroomBootstrapPostDrafts } from './stillroomBootstrapPostDrafts';
 import type { StillroomProfile } from './stillroomProfile';
 
 export interface StillroomBootstrap {
+  pagination?: StillroomBootstrapPagination;
   /** @nullable */
   userId: string | null;
   /** @nullable */

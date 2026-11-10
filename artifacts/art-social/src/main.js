@@ -28,6 +28,10 @@ const state = {
   authActionLoading: false,
   authNotice: null,
   dataLoading: true,
+  contentPage: 0,
+  contentRefreshing: false,
+  contentRefreshError: '',
+  contentPagination: { page: 0, pageSize: 20, hasMore: false },
   dataError: '',
   profileSetupLoading: false,
   profileSetupError: '',
@@ -78,6 +82,7 @@ const state = {
   postErrors: {},
   postPublishing: false,
   postMediaLoading: false,
+  postUploadProgress: 0,
   postMediaToken: 0,
   postMediaError: '',
   pendingPost: null,
@@ -122,6 +127,10 @@ let observedClerkSession = undefined;
 let authGeneration = 0;
 
 function clearAccountEditors() {
+  state.contentPage = 0;
+  state.contentPagination = { page: 0, pageSize: 20, hasMore: false };
+  state.contentRefreshError = '';
+  state.contentRefreshing = false;
   cancelProfileOperation();
   resetUsernameEditor();
   Object.values(state.postDrafts).forEach(releaseDraftMedia);
@@ -260,6 +269,7 @@ function applyBootstrap(data) {
   state.accounts = data.accounts || [];
   state.boards = data.boards || [];
   state.posts = data.posts || [];
+  state.contentPagination = data.pagination || { page: 0, pageSize: 20, hasMore: false };
   state.comments = data.comments || [];
   state.reposts = data.reposts || [];
   state.shelves = data.shelves || [];
@@ -305,14 +315,17 @@ function mountAuthWidget(type, id) {
 async function syncSession() {
   if (syncInFlight) return syncInFlight;
   const generation = authGeneration;
+  let selectionChanged = false;
   syncInFlight = (async () => {
     state.dataLoading = true;
     state.dataError = '';
     render();
     try {
-      const data = await getBootstrap();
+      const selection = contentSelection();
+      const data = await getBootstrap(selection);
       if (generation !== authGeneration) return;
       applyBootstrap(data);
+      selectionChanged = JSON.stringify(selection) !== JSON.stringify(contentSelection());
       state.authLoading = false;
       if (data.userId && !data.profileId) {
         const role = window.sessionStorage.getItem('stillroom.pendingRole');
@@ -338,13 +351,16 @@ async function syncSession() {
   })().finally(() => {
     syncInFlight = null;
     if (generation !== authGeneration) void syncSession();
+    else if (selectionChanged) void refreshPublicContent();
   });
   return syncInFlight;
 }
 
 async function persistAction(action, payload = {}) {
+  contentRefreshId += 1;
+  state.contentRefreshing = false;
   const generation = authGeneration;
-  const data = await runAction(action, payload);
+  const data = await runAction(action, payload, contentSelection());
   if (generation !== authGeneration) throw new Error('Your session changed. Please sign in and try again.');
   applyBootstrap(data);
   render();
@@ -389,6 +405,7 @@ async function startStillroom() {
 }
 
 function navigate(path, { replace = false } = {}) {
+  const changed = state.route !== path;
   if (path !== '/shelves') {
     state.shelfSignupPromptOpen = false;
     state.shelfSignupPromptFocusKey = '';
@@ -405,6 +422,79 @@ function navigate(path, { replace = false } = {}) {
   else if (getRoute() !== path) history.pushState({}, '', hrefFor(path));
   state.route = path;
   render();
+  if (changed) {
+    state.contentPage = 0;
+    void refreshPublicContent();
+  }
+}
+
+function contentSelection() {
+  const selection = { page: state.contentPage || 0 };
+  const parts = state.route.split('/').map((part) => {
+    try { return decodeURIComponent(part); } catch { return part; }
+  });
+  if (parts[1] === 'board' && parts[2]) selection.boardId = parts[2];
+  if (parts[1] === 'post' && parts[2]) selection.postId = parts[2];
+  if (parts[1] === 'shelves' && parts[2] && parts[2] !== 'new') selection.shelfId = parts[2];
+  if (parts[1] === 'profile') {
+    const id = parts[2] || state.activeAccountId;
+    if (id && id !== 'setup') {
+      if (state.profileActivityTabs[id] === 'reposts') selection.repostsBy = id;
+      else selection.profileId = id;
+    } else if (!parts[2]) selection.mine = 'true';
+  }
+  if (['/', '/home'].includes(state.route) && state.homeTab === 'my-artists') selection.followed = 'true';
+  if (state.route === '/explore') {
+    if (state.exploreQuery.trim()) selection.q = state.exploreQuery.trim();
+    if (state.exploreDiscipline !== 'all') selection.category = state.exploreDiscipline;
+  }
+  return selection;
+}
+
+let contentRefreshId = 0;
+async function refreshPublicContent({ background = false } = {}) {
+  // Never replace an editor, a pending mutation, or an authentication form.
+  if (state.authLoading || syncInFlight || !clerk?.loaded) return;
+  const selection = contentSelection();
+  const key = JSON.stringify(selection);
+  const generation = authGeneration;
+  const requestId = ++contentRefreshId;
+  if (!background) { state.contentRefreshing = true; render(); }
+  try {
+    const data = await getBootstrap(selection);
+    if (generation !== authGeneration || requestId !== contentRefreshId || key !== JSON.stringify(contentSelection())) return;
+    applyBootstrap(data);
+    state.contentRefreshError = '';
+  } catch (error) {
+    if (generation !== authGeneration || requestId !== contentRefreshId || key !== JSON.stringify(contentSelection())) return;
+    state.contentRefreshError = error.message || 'Could not refresh public content.';
+  } finally {
+    if (generation === authGeneration && requestId === contentRefreshId) {
+      state.contentRefreshing = false;
+      if (!background || !publicEditorActive()) render();
+    }
+  }
+}
+
+function publicEditorActive() {
+  return Boolean(state.postEditor || state.boardDraft || state.profileDraft || state.shelfDraft
+    || state.postPublishing || state.postMediaLoading || state.boardLoading || state.commentPending
+    || state.shelfLoading || state.usernameLoading || state.editingProfile || state.repostPending
+    || document.activeElement?.matches?.('input, textarea, select, [contenteditable="true"]'));
+}
+
+function renderContentPagination() {
+  if (!['/home', '/explore', '/profile'].includes(state.route)
+    && !/^\/(?:board|profile|shelves)\/[^/]+$/.test(state.route)) return '';
+  if (state.route.startsWith('/profile') && state.profileActivityTabs[state.route.split('/')[2] || state.activeAccountId] === 'shelves') return '';
+  const page = state.contentPage || 0;
+  const hasMore = state.contentPagination?.hasMore;
+  const busy = state.contentRefreshing || publicEditorActive();
+  if (!page && !hasMore && !state.contentRefreshError && !state.contentRefreshing) return '';
+  return `<nav class="content-pagination" aria-label="Content pages">
+    ${state.contentRefreshError ? `<p class="inline-error" role="alert">${escapeHTML(state.contentRefreshError)} <button class="text-button" type="button" data-action="refresh-public-content">Try again</button></p>` : ''}
+    ${page || hasMore ? `<button class="quiet-button" type="button" data-action="content-page" data-page="${Math.max(0, page - 1)}" ${!page || busy ? 'disabled' : ''}>Previous</button><span role="status">${state.contentRefreshing ? 'Loading…' : `Page ${page + 1}`}</span><button class="quiet-button" type="button" data-action="content-page" data-page="${page + 1}" ${!hasMore || busy ? 'disabled' : ''}>Next</button>` : '<span role="status">Refreshing…</span>'}
+  </nav>`;
 }
 
 function cancelRegistration() {
@@ -772,7 +862,7 @@ function renderShell(content, pageTitle) {
     </header>
     <div class="app-main">
       <header class="topbar"><span class="topbar-title">${escapeHTML(pageTitle)}</span></header>
-      <main class="page-content page-enter">${renderAuthNotice()}${content}</main>
+      <main class="page-content page-enter">${renderAuthNotice()}${content}${renderContentPagination()}</main>
     </div>
     ${renderShelfSignupPrompt()}
     ${renderShelfPicker()}
@@ -1040,7 +1130,7 @@ function renderPostForm(board, editor, draft) {
       <label class="field-label">Your post<textarea class="field-input field-textarea post-textarea" name="postContent" rows="5" maxlength="2000" placeholder="Share something with this artist’s community" aria-invalid="${Boolean(error)}" data-post-content ${disabled}>${escapeHTML(draft.content)}</textarea></label>
       ${error ? `<p class="inline-error" data-post-error role="alert">${escapeHTML(error)}</p>` : ''}
       <label class="field-label post-upload-label">Add an image or video <span class="optional-label">(optional)</span><input class="file-input" type="file" data-post-media accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm" ${disabled}><span class="field-hint">Images up to 10 MB; MP4 or WebM videos up to 25 MB.</span></label>
-      ${state.postMediaLoading ? '<p class="field-hint" role="status">Uploading media securely…</p>' : ''}
+      ${state.postMediaLoading ? `<p class="field-hint" role="status"><span data-post-upload-label>${state.postUploadProgress === 100 ? 'Verifying upload…' : `Uploading media securely… ${state.postUploadProgress}%`}</span><progress data-post-upload-progress aria-label="Media upload progress" max="100" value="${state.postUploadProgress}"></progress></p>` : ''}
       ${mediaPreview}
       <div class="post-form-actions">
         <button class="primary-button" type="submit" ${disabled}>${state.postPublishing ? `<span class="registration-loading"><span class="loading-dot"></span>${editing ? 'Saving…' : 'Publishing…'}</span>` : `${editing ? 'Save changes' : 'Publish post'} ${icon('arrow', 14)}`}</button>
@@ -1132,6 +1222,8 @@ function queueExploreSearch() {
   state.exploreTimer = window.setTimeout(() => {
     state.exploreTimer = null;
     state.exploreLoading = false;
+    state.contentPage = 0;
+    void refreshPublicContent();
     try {
       const latestResults = app.querySelector('#explore-results');
       if (latestResults) {
@@ -1156,7 +1248,9 @@ function resetExplore() {
   state.exploreDiscipline = 'all';
   state.exploreLoading = false;
   state.exploreError = '';
+  state.contentPage = 0;
   render();
+  void refreshPublicContent();
 }
 
 function renderExplore() {
@@ -1203,7 +1297,7 @@ function renderArtists() {
 
   return `<section><p class="eyebrow">Your artist space</p><div class="page-heading-row"><div><h1 class="page-title">My Artists</h1><p class="page-subtitle">Your personal artist board.</p></div><button class="quiet-button" type="button" data-action="edit-own-board">${icon('edit', 15)} Edit board</button></div>
     ${state.boardSuccessId === board.id ? `<p class="success-banner" role="status">${icon('check', 15)}${escapeHTML(state.boardSuccess)}</p>` : ''}
-    <div class="owned-board-card">${renderBoardCard(board)}<span class="owned-board-empty">Your board is empty until fans discover it.</span></div>
+    <div class="owned-board-card">${renderBoardCard(board)}<span class="owned-board-empty">Your public board is ready for fan contributions.</span></div>
   </section>`;
 }
 
@@ -2724,6 +2818,7 @@ async function submitPost(form) {
   };
   state.pendingPost = { key, postId: existing?.id || null, boardId: board.id, authorId: account.id, post };
   state.postPublishing = true;
+  if (!existing) state.contentPage = 0;
   render();
   try {
     await persistAction('post.save', {
@@ -2802,9 +2897,17 @@ async function selectPostMedia(input) {
   state.postErrors[key] = '';
   state.postMediaError = '';
   state.postMediaLoading = true;
+  state.postUploadProgress = 0;
   render();
   try {
-    const uploaded = await uploadFile(file, 'post');
+    const uploaded = await uploadFile(file, 'post', (progress) => {
+      if (token !== state.postMediaToken) return;
+      state.postUploadProgress = progress;
+      const meter = app.querySelector('[data-post-upload-progress]');
+      const label = app.querySelector('[data-post-upload-label]');
+      if (meter) meter.value = progress;
+      if (label) label.textContent = progress === 100 ? 'Verifying upload…' : `Uploading media securely… ${progress}%`;
+    });
     if (token !== state.postMediaToken || !state.postDrafts[key]) {
       URL.revokeObjectURL(previewUrl);
       return;
@@ -3027,6 +3130,12 @@ app?.addEventListener('click', (event) => {
   }
 
   const action = target.dataset.action;
+  if (action === 'content-page' || action === 'refresh-public-content') {
+    if (state.contentRefreshing || publicEditorActive()) return;
+    state.contentPage = action === 'content-page' ? Number(target.dataset.page) : 0;
+    void refreshPublicContent();
+    return;
+  }
   const accountRequiredActions = new Set([
     'open-shelf-picker', 'create-shelf', 'create-shelf-from-picker', 'edit-shelf',
     'delete-shelf', 'confirm-delete-shelf', 'cancel-delete-shelf', 'remove-post-from-shelf',
@@ -3080,6 +3189,8 @@ app?.addEventListener('click', (event) => {
     void syncSession();
   } else if (action === 'home-tab') {
     state.homeTab = target.dataset.tab;
+    state.contentPage = 0;
+    void refreshPublicContent();
     render();
   } else if (action === 'toggle-comments') {
     toggleComments(target.dataset.postId);
@@ -3127,6 +3238,8 @@ app?.addEventListener('click', (event) => {
     const profile = state.accounts.find((entry) => entry.id === profileId && entry.role === 'Fan');
     if (profile && ['posts', 'reposts', 'shelves'].includes(target.dataset.tab)) {
       state.profileActivityTabs[profile.id] = target.dataset.tab;
+      state.contentPage = 0;
+      void refreshPublicContent();
       render();
     } else if (profileId === 'visitor' && ['posts', 'reposts', 'shelves'].includes(target.dataset.tab)) {
       state.profileActivityTabs.visitor = target.dataset.tab;
@@ -3279,12 +3392,25 @@ window.addEventListener('popstate', () => {
   if (state.boardLoading) cancelBoardOperation();
   if (state.shelfLoading) cancelShelfOperation();
   state.route = getRoute();
+  state.contentPage = 0;
   if (state.route !== '/shelves') {
     state.shelfSignupPromptOpen = false;
     state.shelfSignupPromptFocusKey = '';
   }
   render();
+  void refreshPublicContent();
 });
+
+// Other browsers/sessions pick up new public contributions without signing in again.
+function refreshVisiblePublicContent() {
+  if (document.hidden || state.contentPage || publicEditorActive()
+    || state.authLoading || state.dataLoading || state.contentRefreshing
+    || ['/login', '/register', '/profile/setup', '/confirmation'].includes(state.route)) return;
+  void refreshPublicContent({ background: true });
+}
+window.addEventListener('focus', refreshVisiblePublicContent);
+document.addEventListener('visibilitychange', refreshVisiblePublicContent);
+window.setInterval(refreshVisiblePublicContent, 20000);
 
 const initialSpecialRoute = /^\/(?:board\/[^/]+|post\/[^/]+|profile\/[^/]+|artists\/(?:new|edit)|shelves\/(?:new|[^/]+(?:\/edit)?))$/.test(state.route);
 if (!navItems.some((item) => item.path === state.route) && state.route !== '/' && state.route !== '/register' && state.route !== '/login' && state.route !== '/confirmation' && !initialSpecialRoute) {

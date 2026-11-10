@@ -114,11 +114,18 @@ export interface StillroomProfile {
  */
 export interface SocialRecord { [key: string]: unknown }
 
+export type StillroomBootstrapPagination = {
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+};
+
 export type StillroomBootstrapFollowedArtistsByFan = {[key: string]: string[]};
 
 export type StillroomBootstrapPostDrafts = {[key: string]: SocialRecord};
 
 export interface StillroomBootstrap {
+  pagination?: StillroomBootstrapPagination;
   /** @nullable */
   userId: string | null;
   /** @nullable */
@@ -150,6 +157,118 @@ export type GetCurrentUser200 = {
 export type CreateStillroomProfile201 = {
   profile: StillroomProfile;
 };
+
+export type GetStillroomBootstrapParams = {
+/**
+ * @minimum 0
+ * @maximum 50000
+ */
+page?: number;
+boardId?: string;
+/**
+ * @maxLength 200
+ */
+authorId?: string;
+/**
+ * @maxLength 200
+ */
+profileId?: string;
+mine?: GetStillroomBootstrapMine;
+/**
+ * @maxLength 200
+ */
+repostsBy?: string;
+shelfId?: string;
+postId?: string;
+followed?: GetStillroomBootstrapFollowed;
+/**
+ * @maxLength 200
+ */
+q?: string;
+category?: GetStillroomBootstrapCategory;
+};
+
+export type GetStillroomBootstrapMine = typeof GetStillroomBootstrapMine[keyof typeof GetStillroomBootstrapMine];
+
+
+export const GetStillroomBootstrapMine = {
+  true: 'true',
+} as const;
+
+export type GetStillroomBootstrapFollowed = typeof GetStillroomBootstrapFollowed[keyof typeof GetStillroomBootstrapFollowed];
+
+
+export const GetStillroomBootstrapFollowed = {
+  true: 'true',
+} as const;
+
+export type GetStillroomBootstrapCategory = typeof GetStillroomBootstrapCategory[keyof typeof GetStillroomBootstrapCategory];
+
+
+export const GetStillroomBootstrapCategory = {
+  Music: 'Music',
+  Film: 'Film',
+  Photography: 'Photography',
+  Painting: 'Painting',
+  Fashion: 'Fashion',
+  Other: 'Other',
+} as const;
+
+export type RunStillroomActionParams = {
+/**
+ * @minimum 0
+ * @maximum 50000
+ */
+page?: number;
+boardId?: string;
+/**
+ * @maxLength 200
+ */
+authorId?: string;
+/**
+ * @maxLength 200
+ */
+profileId?: string;
+mine?: RunStillroomActionMine;
+/**
+ * @maxLength 200
+ */
+repostsBy?: string;
+shelfId?: string;
+postId?: string;
+followed?: RunStillroomActionFollowed;
+/**
+ * @maxLength 200
+ */
+q?: string;
+category?: RunStillroomActionCategory;
+};
+
+export type RunStillroomActionMine = typeof RunStillroomActionMine[keyof typeof RunStillroomActionMine];
+
+
+export const RunStillroomActionMine = {
+  true: 'true',
+} as const;
+
+export type RunStillroomActionFollowed = typeof RunStillroomActionFollowed[keyof typeof RunStillroomActionFollowed];
+
+
+export const RunStillroomActionFollowed = {
+  true: 'true',
+} as const;
+
+export type RunStillroomActionCategory = typeof RunStillroomActionCategory[keyof typeof RunStillroomActionCategory];
+
+
+export const RunStillroomActionCategory = {
+  Music: 'Music',
+  Film: 'Film',
+  Photography: 'Photography',
+  Painting: 'Painting',
+  Fashion: 'Fashion',
+  Other: 'Other',
+} as const;
 
 export type RequestStillroomUpload201 = {
   assetId: string;

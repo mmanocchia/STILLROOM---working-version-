@@ -60,7 +60,40 @@ export const CreateStillroomProfileResponse = zod.object({
 /**
  * @summary Read public content and only the current member's private data
  */
+export const getStillroomBootstrapQueryPageDefault = 0;
+export const getStillroomBootstrapQueryPageMin = 0;
+export const getStillroomBootstrapQueryPageMax = 50000;
+
+export const getStillroomBootstrapQueryAuthorIdMax = 200;
+
+export const getStillroomBootstrapQueryProfileIdMax = 200;
+
+export const getStillroomBootstrapQueryRepostsByMax = 200;
+
+export const getStillroomBootstrapQueryQMax = 200;
+
+
+
+export const GetStillroomBootstrapQueryParams = zod.object({
+  "page": zod.coerce.number().int().min(getStillroomBootstrapQueryPageMin).max(getStillroomBootstrapQueryPageMax).default(getStillroomBootstrapQueryPageDefault),
+  "boardId": zod.coerce.string().uuid().optional(),
+  "authorId": zod.coerce.string().max(getStillroomBootstrapQueryAuthorIdMax).optional(),
+  "profileId": zod.coerce.string().max(getStillroomBootstrapQueryProfileIdMax).optional(),
+  "mine": zod.enum(['true']).optional(),
+  "repostsBy": zod.coerce.string().max(getStillroomBootstrapQueryRepostsByMax).optional(),
+  "shelfId": zod.coerce.string().uuid().optional(),
+  "postId": zod.coerce.string().uuid().optional(),
+  "followed": zod.enum(['true']).optional(),
+  "q": zod.coerce.string().max(getStillroomBootstrapQueryQMax).optional(),
+  "category": zod.enum(['Music', 'Film', 'Photography', 'Painting', 'Fashion', 'Other']).optional()
+})
+
 export const GetStillroomBootstrapResponse = zod.object({
+  "pagination": zod.object({
+  "page": zod.number().int(),
+  "pageSize": zod.number().int(),
+  "hasMore": zod.boolean()
+}).optional(),
   "userId": zod.string().nullable(),
   "profileId": zod.string().nullable(),
   "accounts": zod.array(zod.object({
@@ -87,12 +120,45 @@ export const GetStillroomBootstrapResponse = zod.object({
 /**
  * @summary Perform an authenticated role- and ownership-checked social action
  */
+export const runStillroomActionQueryPageDefault = 0;
+export const runStillroomActionQueryPageMin = 0;
+export const runStillroomActionQueryPageMax = 50000;
+
+export const runStillroomActionQueryAuthorIdMax = 200;
+
+export const runStillroomActionQueryProfileIdMax = 200;
+
+export const runStillroomActionQueryRepostsByMax = 200;
+
+export const runStillroomActionQueryQMax = 200;
+
+
+
+export const RunStillroomActionQueryParams = zod.object({
+  "page": zod.coerce.number().int().min(runStillroomActionQueryPageMin).max(runStillroomActionQueryPageMax).default(runStillroomActionQueryPageDefault),
+  "boardId": zod.coerce.string().uuid().optional(),
+  "authorId": zod.coerce.string().max(runStillroomActionQueryAuthorIdMax).optional(),
+  "profileId": zod.coerce.string().max(runStillroomActionQueryProfileIdMax).optional(),
+  "mine": zod.enum(['true']).optional(),
+  "repostsBy": zod.coerce.string().max(runStillroomActionQueryRepostsByMax).optional(),
+  "shelfId": zod.coerce.string().uuid().optional(),
+  "postId": zod.coerce.string().uuid().optional(),
+  "followed": zod.enum(['true']).optional(),
+  "q": zod.coerce.string().max(runStillroomActionQueryQMax).optional(),
+  "category": zod.enum(['Music', 'Film', 'Photography', 'Painting', 'Fashion', 'Other']).optional()
+})
+
 export const RunStillroomActionBody = zod.object({
   "action": zod.enum(['profile.update', 'profile.username', 'board.save', 'follow.toggle', 'post.save', 'post.delete', 'draft.save', 'draft.delete', 'comment.save', 'comment.delete', 'repost.toggle', 'shelf.save', 'shelf.delete', 'shelf.addPost', 'shelf.removePost', 'shelf.setPosts']),
   "payload": zod.record(zod.string(), zod.unknown()).describe('Action-specific fields are validated by the server using Zod. Caller identity and roles are never accepted from this payload.')
 })
 
 export const RunStillroomActionResponse = zod.object({
+  "pagination": zod.object({
+  "page": zod.number().int(),
+  "pageSize": zod.number().int(),
+  "hasMore": zod.boolean()
+}).optional(),
   "userId": zod.string().nullable(),
   "profileId": zod.string().nullable(),
   "accounts": zod.array(zod.object({

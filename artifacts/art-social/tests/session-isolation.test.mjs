@@ -20,6 +20,7 @@ function harness() {
       location: { pathname: '/home' },
       sessionStorage: { removeItem() {} },
       addEventListener() {},
+      setInterval() {},
     },
     history: { replaceState() {} },
     FormData: class {
@@ -91,6 +92,47 @@ for (const role of ['Fan', 'Artist']) {
     assert.equal(h.run('activeAccount().id'), 'existing');
   });
 }
+
+test('content selection follows Board, post, profile, private-follow and Shelf routes', () => {
+  const h = harness();
+  h.run(`state.route = '/board/board-id'; state.contentPage = 2;`);
+  assert.equal(h.run('JSON.stringify(contentSelection())'), JSON.stringify({ page: 2, boardId: 'board-id' }));
+  h.run(`state.route = '/home'; state.homeTab = 'my-artists';`);
+  assert.equal(h.run('contentSelection().followed'), 'true');
+  h.run(`state.route = '/profile/fan'; state.profileActivityTabs.fan = 'reposts';`);
+  assert.equal(h.run('contentSelection().repostsBy'), 'fan');
+  assert.equal(h.run('contentSelection().mine'), undefined);
+  h.run(`state.route = '/shelves/shelf-id';`);
+  assert.equal(h.run('contentSelection().shelfId'), 'shelf-id');
+  h.run(`state.route = '/post/post-id';`);
+  assert.equal(h.run('contentSelection().postId'), 'post-id');
+});
+
+test('a public refresh replaces its post page instead of accumulating all posts', async () => {
+  const h = harness();
+  h.context.clerk = { loaded: true };
+  h.run(`state.posts = [{ id: 'previous-page' }]; state.contentPage = 1;`);
+  const pending = h.run('refreshPublicContent()');
+  h.resolve({
+    userId: 'fan', profileId: 'fan', accounts: [{ id: 'fan', role: 'Fan' }],
+    posts: [{ id: 'next-page' }], pagination: { page: 1, pageSize: 20, hasMore: true },
+  });
+  await pending;
+  assert.equal(h.run('state.posts.length'), 1);
+  assert.equal(h.run('state.posts[0].id'), 'next-page');
+  assert.equal(h.run('state.contentPagination.hasMore'), true);
+});
+
+test('a public refresh cannot apply a result after switching accounts', async () => {
+  const h = harness();
+  h.context.clerk = { loaded: true };
+  const pending = h.run('refreshPublicContent()');
+  h.run(`authGeneration += 1; clearAccountEditors(); state.activeAccountId = 'artist'; state.authUserId = 'artist';`);
+  const before = h.snapshot();
+  h.resolve(fanResponse);
+  await pending;
+  assert.equal(h.snapshot(), before);
+});
 
 const fanResponse = {
   userId: 'fan', profileId: 'fan',

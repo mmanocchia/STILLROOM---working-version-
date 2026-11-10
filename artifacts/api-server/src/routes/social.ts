@@ -1,8 +1,9 @@
 import { getAuth } from "@clerk/express";
-import { and, asc, desc, eq, inArray, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, ilike, not, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request } from "express";
 import { z } from "zod";
 import { changeUsernameSchema } from "../lib/profileValidation";
+import { contentPageSchema, PAGE_SIZE, pageWindow, type ContentPage } from "../lib/contentPage";
 import {
   artistBoards,
   comments,
@@ -74,14 +75,60 @@ async function requireOwnedMedia(assetId: string | null, ownerId: string, imageO
   return asset;
 }
 
-async function getBootstrap(userId: string | null) {
-  const [profileRows, boardRows, postRows, repostRows, commentRows, shelfRows, mediaRows] =
+async function getBootstrap(userId: string | null, selection: ContentPage = { page: 0 }) {
+  const conditions = [];
+  if (selection.mine) conditions.push(userId
+    ? or(eq(posts.authorId, userId), inArray(posts.boardId,
+      db.select({ id: artistBoards.id }).from(artistBoards).where(eq(artistBoards.ownerId, userId))))
+    : sql`false`);
+  if (selection.boardId) conditions.push(eq(posts.boardId, selection.boardId));
+  if (selection.authorId) conditions.push(eq(posts.authorId, selection.authorId));
+  if (selection.profileId) conditions.push(or(eq(posts.authorId, selection.profileId),
+    inArray(posts.boardId, db.select({ id: artistBoards.id }).from(artistBoards)
+      .where(eq(artistBoards.ownerId, selection.profileId)))));
+  if (selection.postId) conditions.push(eq(posts.id, selection.postId));
+  if (selection.repostsBy) conditions.push(inArray(posts.id,
+    db.select({ id: reposts.postId }).from(reposts).where(eq(reposts.userId, selection.repostsBy))));
+  if (selection.shelfId) conditions.push(inArray(posts.id,
+    db.select({ id: shelfPosts.postId }).from(shelfPosts)
+      .innerJoin(shelves, eq(shelves.id, shelfPosts.shelfId))
+      .where(and(eq(shelves.id, selection.shelfId), userId
+        ? or(eq(shelves.visibility, "public"), eq(shelves.ownerId, userId))
+        : eq(shelves.visibility, "public")))));
+  if (selection.followed) conditions.push(userId
+    ? inArray(posts.boardId, db.select({ id: artistBoards.id }).from(artistBoards)
+      .innerJoin(follows, eq(follows.artistId, artistBoards.ownerId)).where(eq(follows.fanId, userId)))
+    : sql`false`);
+  if (selection.category) {
+    const categories = ["Music", "Film", "Photography", "Painting", "Fashion"];
+    conditions.push(inArray(posts.boardId, db.select({ id: artistBoards.id }).from(artistBoards)
+      .where(selection.category === "Other"
+        ? and(...categories.map((category) => not(ilike(artistBoards.discipline, `%${category}%`))))
+        : ilike(artistBoards.discipline, `%${selection.category}%`))));
+  }
+  // Each search word must match a caption, its author, or its Artist Board.
+  for (const word of (selection.q || "").split(/\s+/).filter(Boolean)) {
+    const pattern = `%${word.replace(/[\\%_]/g, "\\$&")}%`;
+    conditions.push(or(ilike(posts.content, pattern),
+      inArray(posts.authorId, db.select({ id: profiles.id }).from(profiles)
+        .where(or(ilike(profiles.username, pattern), ilike(profiles.displayName, pattern)))),
+      inArray(posts.boardId, db.select({ id: artistBoards.id }).from(artistBoards)
+        .innerJoin(profiles, eq(profiles.id, artistBoards.ownerId))
+        .where(or(ilike(artistBoards.artistName, pattern), ilike(artistBoards.biography, pattern),
+          ilike(artistBoards.discipline, pattern), ilike(profiles.username, pattern),
+          ilike(profiles.displayName, pattern))))));
+  }
+  const page = pageWindow(await db.select().from(posts).where(and(...conditions))
+    .orderBy(desc(posts.publishedAt), desc(posts.id))
+    .limit(PAGE_SIZE + 1).offset(selection.page * PAGE_SIZE), selection.page);
+  const postRows = page.rows;
+  const postIds = postRows.map((post) => post.id);
+  const [profileRows, boardRows, repostRows, commentRows, shelfRows] =
     await Promise.all([
       db.select().from(profiles).orderBy(asc(profiles.createdAt)),
       db.select().from(artistBoards).orderBy(desc(artistBoards.createdAt)),
-      db.select().from(posts).orderBy(asc(posts.publishedAt)),
-      db.select().from(reposts).orderBy(asc(reposts.repostedAt)),
-      db.select().from(comments).orderBy(asc(comments.createdAt)),
+      postIds.length ? db.select().from(reposts).where(inArray(reposts.postId, postIds)).orderBy(asc(reposts.repostedAt)) : Promise.resolve([] as (typeof reposts.$inferSelect)[]),
+      postIds.length ? db.select().from(comments).where(inArray(comments.postId, postIds)).orderBy(asc(comments.createdAt)) : Promise.resolve([] as (typeof comments.$inferSelect)[]),
       db
         .select()
         .from(shelves)
@@ -91,8 +138,15 @@ async function getBootstrap(userId: string | null) {
             : eq(shelves.visibility, "public"),
         )
         .orderBy(desc(shelves.createdAt)),
-      db.select().from(mediaAssets).where(eq(mediaAssets.status, "ready")),
     ]);
+
+  const assetIds = [...new Set([
+    ...profileRows.map((row) => row.profileImageAssetId),
+    ...boardRows.map((row) => row.profileImageAssetId),
+    ...postRows.map((row) => row.mediaAssetId),
+  ].filter((id): id is string => Boolean(id)))];
+  const mediaRows = await db.select().from(mediaAssets).where(and(eq(mediaAssets.status, "ready"),
+    userId ? or(inArray(mediaAssets.id, assetIds), eq(mediaAssets.ownerId, userId)) : inArray(mediaAssets.id, assetIds)));
 
   const accountById = new Map(profileRows.map((profile) => [profile.id, profile]));
   const mediaById = new Map(mediaRows.map((asset) => [asset.id, asset]));
@@ -168,7 +222,7 @@ async function getBootstrap(userId: string | null) {
     description: shelf.description,
     visibility: shelf.visibility,
     postIds: savedRows
-      .filter((saved) => saved.shelfId === shelf.id && postById.has(saved.postId))
+      .filter((saved) => saved.shelfId === shelf.id)
       .sort((left, right) => left.addedAt.getTime() - right.addedAt.getTime())
       .map((saved) => saved.postId),
     createdAt: shelf.createdAt.getTime(),
@@ -176,6 +230,7 @@ async function getBootstrap(userId: string | null) {
   }));
 
   return {
+    pagination: page.pagination,
     userId,
     profileId: userId && accountById.has(userId) ? userId : null,
     accounts: presentedProfiles,
@@ -215,11 +270,21 @@ async function getBootstrap(userId: string | null) {
 }
 
 router.get("/social/bootstrap", async (req, res): Promise<void> => {
+  const selection = contentPageSchema.safeParse(req.query);
+  if (!selection.success) {
+    res.status(400).json({ error: "The requested content page is invalid." });
+    return;
+  }
   const userId = currentUserId(req);
-  res.json(await getBootstrap(userId));
+  res.json(await getBootstrap(userId, selection.data));
 });
 
 router.post("/social/actions", async (req, res): Promise<void> => {
+  const selection = contentPageSchema.safeParse(req.query);
+  if (!selection.success) {
+    res.status(400).json({ error: "The requested content page is invalid." });
+    return;
+  }
   const parsed = commandSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid action." });
@@ -454,7 +519,7 @@ router.post("/social/actions", async (req, res): Promise<void> => {
         throw new HttpError(400, "Unsupported action.");
     }
 
-    res.json(await getBootstrap(userId));
+    res.json(await getBootstrap(userId, selection.data));
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: "Some submitted information is invalid." });

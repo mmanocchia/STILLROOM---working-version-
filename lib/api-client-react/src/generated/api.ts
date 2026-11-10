@@ -24,9 +24,11 @@ import type {
   CompleteStillroomUpload200,
   CreateStillroomProfile201,
   GetCurrentUser200,
+  GetStillroomBootstrapParams,
   HealthStatus,
   ProfileOnboardingInput,
   RequestStillroomUpload201,
+  RunStillroomActionParams,
   SocialActionInput,
   StillroomBootstrap,
   UploadCompleteInput,
@@ -225,20 +227,27 @@ export const useCreateStillroomProfile = <TError = ErrorType<ApiFailureResponse>
       return useMutation(getCreateStillroomProfileMutationOptions(options));
     }
 
-export const getGetStillroomBootstrapUrl = () => {
+export const getGetStillroomBootstrapUrl = (params?: GetStillroomBootstrapParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/social/bootstrap`
+  return stringifiedParams.length > 0 ? `/api/social/bootstrap?${stringifiedParams}` : `/api/social/bootstrap`
 }
 
 /**
  * @summary Read public content and only the current member's private data
  */
-export const getStillroomBootstrap = async ( options?: Parameters<typeof customFetch>[1]): Promise<StillroomBootstrap> => {
+export const getStillroomBootstrap = async (params?: GetStillroomBootstrapParams, options?: Parameters<typeof customFetch>[1]): Promise<StillroomBootstrap> => {
 
-  return customFetch<StillroomBootstrap>(getGetStillroomBootstrapUrl(),
+  return customFetch<StillroomBootstrap>(getGetStillroomBootstrapUrl(params),
   {
     ...options,
     method: 'GET'
@@ -251,23 +260,23 @@ export const getStillroomBootstrap = async ( options?: Parameters<typeof customF
 
 
 
-export const getGetStillroomBootstrapQueryKey = () => {
+export const getGetStillroomBootstrapQueryKey = (params?: GetStillroomBootstrapParams,) => {
     return [
-    `/api/social/bootstrap`
+    `/api/social/bootstrap`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetStillroomBootstrapQueryOptions = <TData = Awaited<ReturnType<typeof getStillroomBootstrap>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStillroomBootstrap>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetStillroomBootstrapQueryOptions = <TData = Awaited<ReturnType<typeof getStillroomBootstrap>>, TError = ErrorType<ApiFailureResponse>>(params?: GetStillroomBootstrapParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStillroomBootstrap>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetStillroomBootstrapQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetStillroomBootstrapQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStillroomBootstrap>>> = ({ signal }) => getStillroomBootstrap({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStillroomBootstrap>>> = ({ signal }) => getStillroomBootstrap(params, { signal, ...requestOptions });
 
 
 
@@ -277,19 +286,19 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetStillroomBootstrapQueryResult = NonNullable<Awaited<ReturnType<typeof getStillroomBootstrap>>>
-export type GetStillroomBootstrapQueryError = ErrorType<unknown>
+export type GetStillroomBootstrapQueryError = ErrorType<ApiFailureResponse>
 
 
 /**
  * @summary Read public content and only the current member's private data
  */
 
-export function useGetStillroomBootstrap<TData = Awaited<ReturnType<typeof getStillroomBootstrap>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStillroomBootstrap>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export function useGetStillroomBootstrap<TData = Awaited<ReturnType<typeof getStillroomBootstrap>>, TError = ErrorType<ApiFailureResponse>>(
+ params?: GetStillroomBootstrapParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStillroomBootstrap>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetStillroomBootstrapQueryOptions(options)
+  const queryOptions = getGetStillroomBootstrapQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -302,18 +311,26 @@ export function useGetStillroomBootstrap<TData = Awaited<ReturnType<typeof getSt
 
 
 
-export const getRunStillroomActionUrl = () => {
+export const getRunStillroomActionUrl = (params?: RunStillroomActionParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/social/actions`
+  return stringifiedParams.length > 0 ? `/api/social/actions?${stringifiedParams}` : `/api/social/actions`
 }
 
 /**
  * @summary Perform an authenticated role- and ownership-checked social action
  */
-export const runStillroomAction = async (socialActionInput: SocialActionInput, options?: Parameters<typeof customFetch>[1]): Promise<StillroomBootstrap> => {
+export const runStillroomAction = async (socialActionInput: SocialActionInput,
+    params?: RunStillroomActionParams, options?: Parameters<typeof customFetch>[1]): Promise<StillroomBootstrap> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -329,7 +346,7 @@ export const runStillroomAction = async (socialActionInput: SocialActionInput, o
     }
     return headers;
   };
-return customFetch<StillroomBootstrap>(getRunStillroomActionUrl(),
+return customFetch<StillroomBootstrap>(getRunStillroomActionUrl(params),
   {
     ...options,
     method: 'POST',
@@ -359,9 +376,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof runStillroomAction>>, RunStillroomActionMutationVariables> = (props) => {
-          const {data} = props ?? {};
+          const {data,params} = props ?? {};
 
-          return  runStillroomAction(data,requestOptions)
+          return  runStillroomAction(data,params,requestOptions)
         }
 
 
@@ -374,7 +391,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type RunStillroomActionMutationResult = NonNullable<Awaited<ReturnType<typeof runStillroomAction>>>
     export type RunStillroomActionMutationBody = BodyType<SocialActionInput>
     export type RunStillroomActionMutationError = ErrorType<ApiFailureResponse>
-    export type RunStillroomActionMutationVariables = {data: BodyType<SocialActionInput>}
+    export type RunStillroomActionMutationVariables = {data: BodyType<SocialActionInput>;params?: RunStillroomActionParams}
 
     /**
  * @summary Perform an authenticated role- and ownership-checked social action
