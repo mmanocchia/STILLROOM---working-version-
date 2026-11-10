@@ -6,6 +6,7 @@ import { publishableKeyFromHost } from "@clerk/shared/keys";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { AccountError } from "./lib/accountDeletion";
+import { requestBodyError } from "./lib/requestBodyError";
 import {
   CLERK_PROXY_PATH,
   clerkProxyMiddleware,
@@ -37,8 +38,10 @@ app.use(
 );
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
 app.use(cors({ credentials: true, origin: false }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Browser API requests are small JSON documents, not compressed file uploads.
+// Reject encoded bodies before decompression and retain the existing 100 KB cap.
+app.use(express.json({ inflate: false, limit: "100kb" }));
+app.use(express.urlencoded({ extended: true, inflate: false, limit: "100kb" }));
 app.use(
   clerkMiddleware((req) => ({
     publishableKey: publishableKeyFromHost(
@@ -73,6 +76,12 @@ app.use("/api", (req, res, next) => {
 app.use("/api", router);
 
 const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
+  const bodyError = requestBodyError(error);
+  if (bodyError) {
+    res.setHeader("Cache-Control", "private, no-store");
+    res.status(bodyError.status).json({ error: bodyError.message });
+    return;
+  }
   if (error instanceof AccountError) {
     res.status(error.status).json({ error: error.message, code: error.code });
     return;

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stillroom — Production Readiness Audit</title>
+<style>
+body{max-width:1040px;margin:40px auto;padding:0 22px 60px;background:#fff;color:#29252a;font:16px/1.65 system-ui,sans-serif}
+h1{font-size:30px;line-height:1.2}h2{font-size:23px;margin-top:36px}h3{font-size:18px}
+a{color:#a8456a}code{background:#faf4f6;padding:2px 5px;overflow-wrap:anywhere;font-size:.88em}
+.status{border-left:5px solid #a8456a;padding:18px;background:#faf4f6}.small{font-size:14px;color:#5e5459}
+table{width:100%;border-collapse:collapse;margin:18px 0;font-size:14px}th,td{text-align:left;vertical-align:top;border:1px solid #e8b9c7;padding:10px}th{background:#faf4f6}
+.table-wrap{overflow-x:auto}li{margin:7px 0}
+</style>
+<header>
+<p class="small">Audit date: November 10, 2026 · Development and public deployment checked separately</p>
+<h1>Stillroom — Production Readiness Audit</h1>
+<p class="status"><strong>NOT READY — Critical security, functional, or deployment problems remain unresolved.</strong><br>
+The public deployment serves an older demo without the current social APIs or Clerk login. One high-severity dependency advisory remains.
+Authenticated cross-account and destructive lifecycle checks were not authorized or executed in this pass.</p>
+<p>No publishing, production database changes, schema migrations, test-account creation, real-content deletion, storage writes, or redesign were performed.
+This report distinguishes executed checks from source inspection and blocked tests.</p>
+</header>
+<h2>A. Implemented fixes</h2>
+<ul>
+<li><strong>Malformed request handling:</strong> reproduced malformed JSON returning HTTP 500 in development. It now returns a safe HTTP 400. Oversized requests return 413; unsupported compressed requests return 415. Expected parser errors no longer enter the unhandled-error logger, which could include submitted input.</li>
+<li><strong>Dependency remediation:</strong> compatible updates to Clerk JS and Orval, plus supported patched transitive versions of body-parser, qs, undici, fast-uri and Zod 4. Express was already at its latest release; compatible overrides patch its parsers. Initial findings: 7 high, 7 moderate, 2 low. Final findings: 1 high, no moderate, low or critical findings.</li>
+<li><strong>Regression coverage:</strong> added parser-error tests and a reproducible anonymous HTTP smoke script. The script creates no fixtures; optional malformed/unauthorized rejection probes are restricted to development URLs.</li>
+</ul>
+<p>Application layouts, pink palette, logo, typography, roles, data schema and product features remain unchanged.</p>
+<h2>B. Security findings</h2>
+<ul>
+<li><strong>HIGH — unresolved:</strong> Zod 3.25.76 is flagged by GHSA-mrhx-c7xc-m3w5 for resource exhaustion during array validation. The scanner recommends 4.6.6 or later. No patched Zod 3 release was found. A major-version migration was not silently applied. The existing 100 KB request cap limits input size but is not proof the vulnerability is fixed.</li>
+<li><strong>Executed:</strong> anonymous profile creation, upload initiation/completion, post deletion, account deletion, Settings access and Board curation requests were denied. A cross-site mutation was rejected with 403.</li>
+<li><strong>Source inspection:</strong> Clerk subjects, not caller-supplied IDs, determine identity. Stored roles gate Fan publishing and Artist curation. Ownership predicates protect edits, comments, reposts and Shelves. Public Shelf reads include a visibility/owner filter. Deletion requires recent first-factor verification and separate Artist-cascade consent; a durable tombstone prevents a deleted session recreating a profile.</li>
+<li><strong>Not established by source inspection:</strong> correct behavior under real authenticated cross-account attacks, email-verification policy, password changes, completed recovery, provider cleanup and session refresh. These remain blocked.</li>
+<li>Final SAST scan completed with zero findings. Final privacy/dataflow scan returned zero findings. Scanner results are not a substitute for live authorization tests.</li>
+</ul>
+<h2>C. Database and media findings</h2>
+<ul>
+<li><strong>Development:</strong> PostgreSQL queries succeeded. All 16 Stillroom tables were present. Inspected foreign-key constraints were validated; cascades and composite same-Board curation relationships were present. Unique indexes protect normalized usernames, one Board per owner, reposts and saved memberships. Feed, Board, comment, Shelf and discovery-search indexes were present.</li>
+<li>Read-only consistency checks found zero duplicate/invalid normalized usernames, zero Boards owned by non-Artists, zero original posts authored by non-Fans and zero active profiles matching deletion tombstones. This is a snapshot of existing data, not a migration or concurrency test.</li>
+<li>Two legacy optional profile-image references (profile image and Board portrait) are UUID fields without database foreign keys. Server ownership/ready-state validation and read filtering protect current paths. Additional database constraints would require a separately reviewed, non-destructive schema change.</li>
+<li><strong>Production:</strong> the production SQL callback reported “This project has no production database.” Required secret names exist, but that does not prove a production database is provisioned, connected or migrated. Production tables, indexes and migration parity remain <strong>BLOCKED</strong>. No reset, overwrite, push or destructive migration was attempted.</li>
+<li><strong>Media source inspection:</strong> uploads use private persistent App Storage; size/type and signature checks run server-side. Finalization uses the verified object generation and an immutable copy. Public references versus owner-only unattached assets are checked before streaming; video byte ranges are supported. Missing media returned a safe 404.</li>
+<li><strong>Media retention finding:</strong> ordinary post deletion removes the post but does not enqueue reference-aware cleanup of its newly unreferenced stored asset. Account-deletion cleanup is separate and durable. Do not blindly delete assets: other posts, drafts or profile fields may still reference them. A safe cleanup fix and isolated lifecycle tests remain necessary.</li>
+<li>No ready media assets were available in development. Real photo/video upload, playback, cross-browser delivery, byte ranges and storage erasure were <strong>NOT VERIFIED</strong>. No files were uploaded for this audit.</li>
+<li>Deletion jobs retry through a timer and incoming requests. Eventual cleanup while an autoscaled deployment is asleep needs an operational guarantee; no scheduler or infrastructure change was introduced.</li>
+</ul>
+<h2>D. Tests passed</h2>
+<div class="table-wrap"><table>
+<tr><th>Executed check</th><th>Result and limits</th></tr>
+<tr><td>Frontend unit/regression tests</td><td>67 passed, 0 failed. Includes theme, auth-state isolation, account UI, pagination, curation and media validation regressions. Not live account journeys.</td></tr>
+<tr><td>Backend unit tests</td><td>28 passed, 0 failed, including new parser-error handling. These do not establish live cross-account authorization.</td></tr>
+<tr><td>Development HTTP smoke checks</td><td>33 passed, 0 failed. Real public Feed/Explore/Board/profile/comment/curation reads; six categories; combined no-results; invalid cursor/category; missing resources; guest/private-state isolation; anonymous and cross-site rejections; 400/413/415 parser responses.</td></tr>
+<tr><td>Build and static checks</td><td>Root workspace typecheck, frontend build, API build, script syntax and git diff checks passed.</td></tr>
+<tr><td>Desktop/mobile browser visitor journey</td><td>Passed at 1440×950 and 390×844: real public Feed, My Artists guest state, Explore search/filter/reset, Board and Fan profile links, empty comments, My Space join modal and Escape/outside/X dismissal, Fan/Artist selection, Clerk sign-in display and recovery-screen access. No login or recovery submission.</td></tr>
+<tr><td>Visual identity</td><td>White/dusty-pink desktop and mobile UI inspected; existing theme regression checks passed. No redesign. This is not a full assistive-technology accessibility audit.</td></tr>
+</table></div>
+<p class="small">Commands: <code>pnpm run typecheck</code>;
+<code>node --test artifacts/art-social/tests/*.test.mjs</code>;
+<code>pnpm --filter @workspace/api-server test</code>;
+<code>node scripts/src/stillroom-readonly-smoke.mjs --rejection-probes</code>.
+Frontend build supplied its existing PORT and BASE_PATH values. Both managed workflows restarted and served requests.</p>
+<h2>E. Failed checks and production evidence</h2>
+<p>The production investigation and an independent browser pass checked
+<a href="https://stillroom-demo.replit.app">https://stillroom-demo.replit.app</a>.
+Deployment metadata says public, autoscale, successful build; the available active revision was built on October 27, 2026.</p>
+<ul>
+<li><strong>FAIL:</strong> <code>GET /api/social/bootstrap</code> returns 404 “Cannot GET …”, not a successful social snapshot. Workspace Feed and Explore use this endpoint, with <code>view=feed</code> or <code>view=explore</code>.</li>
+<li><strong>FAIL:</strong> the deployed bundle contains the older in-memory demo, without current Clerk/API integration. Browser inspection confirmed an old mint/teal interface, no shared records and no Clerk form at <code>/login</code>; it returned to Home.</li>
+<li><strong>PASS, insufficient alone:</strong> <code>/api/healthz</code> returns 200. HTML at Home/Explore/Login/Register returns the SPA shell; that does not prove those features work.</li>
+<li>Production runtime logs were available for November 9–10. They include repeated platform health-probe errors targeting <code>/api</code>, while <code>/api/healthz</code> succeeds. No database exception or stack trace establishes the historical bootstrap 500's cause.</li>
+<li>The supplied historical deployment-preview URL now returns a Replit availability 404. Its prior 500 remains <strong>unresolved/not reproducible</strong>; no cause is guessed.</li>
+</ul>
+<h2>Deployment-preview acceptance matrix</h2>
+<div class="table-wrap"><table>
+<tr><th>Required acceptance test</th><th>Status</th></tr>
+<tr><td>1. Current application loads without critical errors</td><td>FAIL on public deployment: stale demo. Historical preview BLOCKED.</td></tr>
+<tr><td>2. Bootstrap successful</td><td>FAIL: published endpoint 404.</td></tr>
+<tr><td>3. Persistent Feed loads</td><td>FAIL: no current API-backed Feed in published bundle.</td></tr>
+<tr><td>4. Explore shows database records</td><td>FAIL: deployed Explore is the old empty demo.</td></tr>
+<tr><td>5. Artist Boards open</td><td>BLOCKED: published social data unavailable.</td></tr>
+<tr><td>6. Authentication works</td><td>FAIL: published login has no Clerk form. Actual credential tests NOT VERIFIED.</td></tr>
+<tr><td>7. Account Settings works</td><td>BLOCKED: no verified production authentication.</td></tr>
+<tr><td>8. Public content across authenticated sessions</td><td>BLOCKED: current backend and isolated accounts not available in production.</td></tr>
+<tr><td>9. Media loads</td><td>BLOCKED: no available production asset to verify.</td></tr>
+<tr><td>10. No critical Network/Console failures</td><td>FAIL: missing published bootstrap endpoint.</td></tr>
+</table></div>
+<h2>F. Tests blocked or not performed</h2>
+<p>Permission to create isolated test accounts/content was requested but not received during this pass. Consequently, the following are <strong>BLOCKED</strong>, not passed:</p>
+<ul>
+<li>Fan and Artist registration completion, credential sign-in/sign-out, refresh persistence, duplicate-username collisions and real email verification.</li>
+<li>Fan creation/edit/deletion/media; follows; comments; repost/undo; private/public Shelf creation, saving and cross-account isolation.</li>
+<li>Artist Board editing, commenting, feature/unfeature/reorder, Collection management and authenticated denial of original posting.</li>
+<li>Cross-account visibility, reauthentication persistence, unauthorized ownership attempts, Settings updates, password changes and completed password recovery.</li>
+<li>Full HTTP/browser account deletion, partial provider failures, Clerk erasure and media cleanup using independently verified disposable identities.</li>
+</ul>
+<p>Existing real accounts were not deleted, impersonated or modified.</p>
+<h2>G. Remaining reliability and performance issues</h2>
+<ul>
+<li>The stale public release, missing production database verification and Zod 3 advisory block launch certification.</li>
+<li>Reference-aware ordinary content-media cleanup and reliable execution of delayed deletion jobs require follow-up.</li>
+<li>Other already-open preview traffic repeatedly requested Board curation and received 404. A fresh browser visit and direct request for the existing Board succeeded. Query strings are intentionally omitted from logs, so the stale/failing request context has not been established; no speculative fix was applied.</li>
+<li>Feed and Explore are paginated and indexed; comments and Shelf responses are bounded. These facts do not prove scale. No load test was run. Observed smoke timings were roughly 5–33 ms for most requests after the initial health request, not a production benchmark.</li>
+<li>The frontend build retains an approximately 1.79 MB JavaScript chunk (646 KB gzip), a mobile-performance concern. No architecture or loading strategy was changed. A sampled Explore navigation issued one bootstrap request; duplicate traffic across all routes/sessions was not comprehensively profiled.</li>
+</ul>
+<h2>H. Recommended next actions</h2>
+<ol>
+<li>Approve isolated development-only identities and fixtures, with exact provenance checks and cleanup, to complete protected Fan/Artist and deletion journeys. Never weaken provider reverification to make tests pass.</li>
+<li>Approve and validate the Zod 4 migration; then rerun validators, generated-contract checks and the dependency audit.</li>
+<li>Implement and test safe, reference-aware media cleanup, and decide how delayed cleanup runs when autoscaling sleeps. Do not bulk-delete existing files.</li>
+<li>Create a fresh deployment preview of the intended current frontend and API through the normal publishing interface. Verify production database provisioning and review the managed schema diff without overwrite/reset options. Do not put DDL in startup/build scripts. Check the active health probe uses the existing <code>/api/healthz</code> configuration.</li>
+<li>Run every deployment acceptance check against that exact environment, including Clerk live-domain behavior, shared persistence, Settings and media. Only then consider publication. No publication is recommended from this audit.</li>
+</ol>
+<p class="status"><strong>NOT READY — Critical security, functional, or deployment problems remain unresolved.</strong></p>
+</html>

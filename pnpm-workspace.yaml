@@ -43,6 +43,9 @@ onlyBuiltDependencies:
   - unrs-resolver
 
 overrides:
+  # Express is already at its latest release; patch its vulnerable transitive parsers.
+  body-parser@^2: ^2.4.0
+  qs@^6: ^6.16.1
   '@esbuild-kit/esm-loader': npm:tsx@^4.21.0
   '@expo/ngrok-bin>@expo/ngrok-bin-darwin-arm64': '-'
   '@expo/ngrok-bin>@expo/ngrok-bin-darwin-x64': '-'
