@@ -1,4 +1,5 @@
 import './index.css';
+import './profile.css';
 import { appendPublicSnapshot, patchInteraction, PUBLIC_WINDOW_LIMIT } from './publicContent.js';
 import { createProfile, getBootstrap, getComments, getShelves, runAction, uploadFile } from './api.js';
 import { clerk, clerkAppearance, loadClerk } from './clerk.js';
@@ -300,6 +301,7 @@ const iconPaths = {
   edit: '<path d="m14 5 5 5M4 20l4.2-.9L19 8.3 15.7 5 4.9 15.8 4 20Z"/><path d="M12 20h8"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m21 15-5-5L5 20"/>',
   trash: '<path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v6m6-6v6"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>',
   repost: '<path d="m17 3 4 4-4 4"/><path d="M3 11V9a2 2 0 0 1 2-2h16"/><path d="m7 21-4-4 4-4"/><path d="M21 13v2a2 2 0 0 1-2 2H3"/>',
 };
 
@@ -551,6 +553,10 @@ function contentSelection() {
     if (id && id !== 'setup') {
       if (state.profileActivityTabs[id] === 'reposts') selection.repostsBy = id;
       else selection.profileId = id;
+      // Keep the Artist's Board header available even on an empty Reposts tab.
+      if (state.accounts.find((account) => account.id === id)?.role === 'Artist') selection.profileId = id;
+      // Request the existing private Artist-list scope only for its Fan owner.
+      if (id === state.activeAccountId && activeAccount()?.role === 'Fan') selection.artistList = 'true';
     } else if (!parts[2]) selection.mine = 'true';
   }
   if (['/', '/home'].includes(state.route) && state.homeTab === 'my-artists') selection.followed = 'true';
@@ -2063,149 +2069,145 @@ function renderUsernameChange(profile) {
   </section>`;
 }
 
-function renderFanActivity(profile, isOwner) {
+function profileTabButtons(profileId, tab, label) {
+  const tabs = [['posts', 'image', 'Posts'], ['reposts', 'repost', 'Reposts'], ['shelves', 'bookmark', 'Shelves']];
+  return `<div class="sr-profile-tabs" role="tablist" aria-label="${escapeHTML(label)}">${tabs.map(([key, glyph, text]) => `<button class="sr-profile-tab" id="profile-tab-${key}" type="button" data-action="profile-activity-tab" data-profile-id="${escapeHTML(profileId)}" data-tab="${key}" role="tab" aria-label="${text}" aria-controls="profile-tab-panel" aria-selected="${tab === key}" data-testid="tab-profile-${key}">${icon(glyph, 15)}<span>${text}</span></button>`).join('')}</div>`;
+}
+
+function renderProfileGridTile(post, repost = null) {
+  const board = state.boards.find((entry) => entry.id === post.boardId);
+  const author = state.accounts.find((entry) => entry.id === post.authorId);
+  const username = post.authorUsername || author?.username || '';
+  const route = `/post/${encodeURIComponent(post.id)}`;
+  const media = post.media;
+  const visual = media?.type === 'image'
+    ? `<img class="sr-tile-media" src="${escapeHTML(media.url)}" alt="Image shared by @${escapeHTML(username)}" loading="lazy">`
+    : media?.type === 'video'
+      ? `<video class="sr-tile-media" src="${escapeHTML(media.url)}" preload="metadata" muted playsinline aria-hidden="true"></video><span class="sr-tile-badge">Video</span>`
+      : `<span class="sr-tile-text">${escapeHTML((post.content || '').trim().slice(0, 220))}</span>`;
+  const account = activeAccount();
+  const ownRepost = repost && account?.role === 'Fan' && repost.userId === account.id;
+  const confirming = ownRepost && state.repostConfirm?.postId === post.id && state.repostConfirm?.userId === account.id;
+  const pending = ownRepost && state.repostPending?.postId === post.id;
+  return `<article class="sr-tile${media ? ' sr-tile-visual' : ' sr-tile-plain'}" data-testid="card-profile-post-${escapeHTML(post.id)}">
+    <a class="sr-tile-link" href="${hrefFor(route)}" data-route="${route}" aria-label="Open post by @${escapeHTML(username)}${board ? ` on ${escapeHTML(board.artistName)}’s Board` : ''}">
+      ${visual}
+      <span class="sr-tile-caption"><span class="sr-tile-author">@${escapeHTML(username)}</span>${board ? `<span class="sr-tile-board">on ${escapeHTML(board.artistName)}</span>` : ''}</span>
+    </a>
+    ${ownRepost ? `<div class="sr-tile-tools">${confirming
+      ? `<span>Undo repost?</span><button class="text-button text-danger" type="button" data-action="confirm-repost" data-post-id="${escapeHTML(post.id)}">Confirm</button><button class="text-button" type="button" data-action="cancel-repost">Cancel</button>`
+      : pending ? '<span role="status">Undoing…</span>'
+      : `<button class="text-button" type="button" data-action="toggle-repost" data-post-id="${escapeHTML(post.id)}" ${state.repostPending ? 'disabled' : ''} data-testid="button-undo-repost-${escapeHTML(post.id)}">${icon('repost', 13)} Undo repost</button>`}</div>` : ''}
+  </article>`;
+}
+
+function renderProfileQuietEmpty(message, action = '') {
+  return `<div class="sr-profile-empty"><p>${escapeHTML(message)}</p>${action}</div>`;
+}
+
+function renderProfileTabs(profile, isOwner) {
   const tab = state.profileActivityTabs[profile.id] || 'posts';
-  const activity = accountActivityItems(profile.id);
-  const items = tab === 'posts' || tab === 'reposts'
-    ? activity.filter((item) => item.type === (tab === 'posts' ? 'post' : 'repost'))
-    : [];
-  const shelves = tab === 'shelves'
-    ? state.shelves.filter((shelf) => shelf.ownerId === profile.id && (isOwner || shelf.visibility === 'public'))
-    : [];
-  const tabContent = tab === 'shelves'
-    ? shelves.length
-      ? `<div class="profile-shelf-grid">${shelves.map(isOwner ? renderMySpaceShelfCard : renderShelfCard).join('')}</div>`
-      : renderEmpty(isOwner ? 'Your shelves are empty.' : 'No public Shelves yet.', isOwner ? 'Create a Shelf in My Space to save posts for later.' : '')
-    : items.length
-      ? `<div class="post-list">${items.map(renderFeedItem).join('')}</div>`
-      : renderEmpty(tab === 'posts' ? 'No posts yet.' : 'No reposts yet.', tab === 'posts' ? 'Posts you publish will appear here.' : 'Reposts you share will appear here.');
-  return `<section class="profile-activity">
-    <div class="profile-activity-heading"><h2 class="section-heading">Activity</h2><div class="profile-tabs" role="tablist" aria-label="${escapeHTML(profile.username)} profile activity">
-      <button class="profile-tab" type="button" data-action="profile-activity-tab" data-profile-id="${escapeHTML(profile.id)}" data-tab="posts" role="tab" aria-selected="${tab === 'posts'}">Posts</button>
-      <button class="profile-tab" type="button" data-action="profile-activity-tab" data-profile-id="${escapeHTML(profile.id)}" data-tab="reposts" role="tab" aria-selected="${tab === 'reposts'}">Reposts</button>
-      <button class="profile-tab" type="button" data-action="profile-activity-tab" data-profile-id="${escapeHTML(profile.id)}" data-tab="shelves" role="tab" aria-selected="${tab === 'shelves'}">Shelves</button>
-    </div></div>
-    ${tab === 'shelves' && isOwner ? `<a class="profile-manage-shelves" href="${hrefFor('/shelves')}" data-route="/shelves">Manage My Space ${icon('arrow', 13)}</a>` : ''}
-    ${tabContent}
-  </section>`;
-}
-
-function renderProfileArtistCard(board) {
-  const route = `/board/${encodeURIComponent(board.id)}`;
-  const portrait = board.profileImage
-    ? `<img class="profile-artist-avatar" src="${escapeHTML(board.profileImage)}" alt="${escapeHTML(board.artistName)}">`
-    : `<span class="profile-artist-avatar profile-artist-avatar-empty" aria-hidden="true">${icon('artists', 18)}</span>`;
-  return `<a class="profile-artist-card" href="${hrefFor(route)}" data-route="${route}">${portrait}<span class="profile-artist-card-copy"><span class="profile-artist-name">${escapeHTML(board.artistName)}</span><span class="profile-artist-discipline">${escapeHTML(board.discipline)}</span></span>${icon('arrow', 14)}</a>`;
-}
-
-function renderProfileArtists(profile, isOwner) {
-  if (!isOwner) {
-    return `<section class="profile-artists-section"><div class="section-heading-row"><h2 class="section-heading">My Artists &amp; Pages</h2></div>${renderEmpty('This list is private.', 'Only the profile owner can view their My Artists list.')}</section>`;
+  const isArtist = profile.role === 'Artist';
+  const board = isArtist ? boardForOwner(profile.id) : null;
+  let body;
+  if (tab === 'shelves') {
+    const shelves = state.shelves.filter((shelf) => shelf.ownerId === profile.id && (isOwner || shelf.visibility === 'public'));
+    body = shelves.length
+      ? `<div class="sr-shelf-grid">${shelves.map(renderMySpaceShelfCard).join('')}</div>`
+      : renderProfileQuietEmpty(isOwner ? 'Your Shelves will appear here.' : 'No public Shelves yet.');
+    if (isOwner) body = `<div class="sr-tab-tools"><button class="text-link" type="button" data-action="create-shelf">${icon('plus', 13)} New Shelf</button><a class="text-link" href="${hrefFor('/shelves')}" data-route="/shelves">Manage in My Space ${icon('arrow', 13)}</a></div>${body}`;
+  } else if (tab === 'posts' && isArtist) {
+    const posts = board ? chronologicalPosts(state.posts.filter((post) => post.boardId === board.id && isVisibleFanPost(post))).reverse() : [];
+    body = posts.length
+      ? `<p class="sr-tab-note">Fan contributions on this Board.</p><div class="sr-grid">${posts.map((post) => renderProfileGridTile(post)).join('')}</div>`
+      : renderProfileQuietEmpty(board ? 'No posts yet.' : 'No Board yet.', '');
+  } else {
+    const items = accountActivityItems(profile.id).filter((item) => item.type === (tab === 'posts' ? 'post' : 'repost')).reverse();
+    body = items.length
+      ? `<div class="sr-grid">${items.map((item) => renderProfileGridTile(item.post, item.repost || null)).join('')}</div>`
+      : renderProfileQuietEmpty(tab === 'posts' ? 'No posts yet.' : 'No reposts yet.',
+        isOwner && tab === 'posts' && !isArtist ? `<a class="text-link" href="${hrefFor('/explore')}" data-route="/explore">Find a Board to post on ${icon('arrow', 13)}</a>` : '');
   }
+  const feedback = isOwner && state.repostStatus?.userId === profile.id
+    ? `<p class="${state.repostStatus.kind === 'error' ? 'inline-error' : 'field-hint'}" role="${state.repostStatus.kind === 'error' ? 'alert' : 'status'}">${escapeHTML(state.repostStatus.message)}</p>` : '';
+  return `<section class="sr-profile-content">${profileTabButtons(profile.id, tab, `${profile.username} profile content`)}${feedback}<div class="sr-tab-panel" id="profile-tab-panel" role="tabpanel" aria-labelledby="profile-tab-${escapeHTML(tab)}">${body}</div></section>`;
+}
+
+function renderProfileFollowing(profile, isOwner) {
+  // Followed Artists are private: only the owner ever sees this row.
+  if (!isOwner || profile.role !== 'Fan') return '';
   const followed = new Set(followedArtistIds(profile.id));
   const boards = state.boards.filter((board) => followed.has(board.ownerId));
-  return `<section class="profile-artists-section"><div class="section-heading-row"><h2 class="section-heading">My Artists &amp; Pages</h2><a class="text-link" href="${hrefFor('/artists')}" data-route="/artists">Manage My Artists ${icon('arrow', 13)}</a></div>
-    ${boards.length ? `<div class="profile-artist-grid">${boards.map(renderProfileArtistCard).join('')}</div>` : `${renderEmpty("You haven't connected with any artists yet.", 'Artist Boards you add to My Artists will appear here.')}<div class="empty-action"><a class="quiet-button" href="${hrefFor('/explore')}" data-route="/explore">Explore Artists ${icon('arrow', 14)}</a></div>`}
-  </section>`;
+  if (!boards.length) return `<div class="sr-following sr-following-empty"><a class="text-link" href="${hrefFor('/explore')}" data-route="/explore">Discover Artists ${icon('arrow', 13)}</a></div>`;
+  const shown = boards.slice(0, 8);
+  return `<div class="sr-following"><span class="sr-following-label">My Artists</span><ul class="sr-following-row">${shown.map((board) => {
+    const route = `/board/${encodeURIComponent(board.id)}`;
+    const face = board.profileImage ? `<img src="${escapeHTML(board.profileImage)}" alt="">` : `<span aria-hidden="true">${escapeHTML((board.artistName.trim()[0] || 'A').toUpperCase())}</span>`;
+    return `<li><a class="sr-following-face" href="${hrefFor(route)}" data-route="${route}" title="${escapeHTML(board.artistName)}" aria-label="${escapeHTML(board.artistName)} Board">${face}</a></li>`;
+  }).join('')}</ul><a class="text-link" href="${hrefFor('/artists')}" data-route="/artists">See All</a></div>`;
 }
 
-function renderFanProfileContent(profile, isOwner) {
-  const editing = isOwner && state.editingProfile;
-  return `<div class="profile-card public-profile-card fan-profile-card">
-    <div class="fan-profile-header"><div class="profile-card-head">${renderProfileAvatar(profile.profileImage || '', profile.name, profile.username, true)}<div><h2 class="profile-name">${escapeHTML(profile.name)}</h2>${renderProfileHandle(profile)}<span class="role-pill">Fan</span></div></div>
-      ${isOwner && !editing ? `<button class="quiet-button profile-edit" type="button" data-action="edit-profile">${icon('edit', 14)} Edit Profile</button>` : ''}
-    </div>
-    ${renderProfileStatus(profile.id)}
-    ${editing ? `${renderFanProfileForm(profile)}${renderUsernameChange(profile)}` : ''}
-    <section class="profile-about"><h2 class="section-heading">About Me</h2><p class="profile-bio">${profile.biography ? escapeHTML(profile.biography) : `<span class="profile-bio-empty">${isOwner ? 'Add a short biography to introduce yourself.' : 'No biography yet.'}</span>`}</p><div class="profile-interests"><h3>Artistic interests</h3><p>${profile.interests ? escapeHTML(profile.interests) : `<span class="profile-bio-empty">${isOwner ? 'Add the artists and creative disciplines that shape your taste.' : 'No interests shared yet.'}</span>`}</p></div></section>
-  </div>
-  ${renderProfileArtists(profile, isOwner)}
-  ${renderFanActivity(profile, isOwner)}`;
-}
-
-function renderArtistProfileContent(profile, isOwner) {
-  const board = boardForOwner(profile.id);
+function renderProfileHeader(profile, isOwner) {
+  const isArtist = profile.role === 'Artist';
+  const board = isArtist ? boardForOwner(profile.id) : null;
   const name = board?.artistName || profile.name;
-  const image = board?.profileImage || '';
+  const image = isArtist ? board?.profileImage || '' : profile.profileImage || '';
+  const bio = isArtist ? board?.biography : profile.biography;
   const boardRoute = board ? `/board/${encodeURIComponent(board.id)}` : '';
-  const posts = board
-    ? chronologicalPosts(state.posts.filter((post) => post.boardId === board.id && isVisibleFanPost(post)))
-    : [];
-  return `<div class="profile-card public-profile-card artist-profile-card">
-    <div class="profile-card-head">${renderProfileAvatar(image, name, profile.username, true)}<div><span class="board-card-discipline">${board ? escapeHTML(board.discipline) : 'Artist'}</span><h2 class="profile-name">${escapeHTML(name)}</h2>${renderProfileHandle(profile)}</div></div>
-    ${board?.biography ? `<p class="profile-bio">${escapeHTML(board.biography)}</p>` : ''}
-    ${renderProfileStatus(profile.id)}
-    <div class="artist-profile-actions">${board ? `<a class="quiet-button" href="${hrefFor(boardRoute)}" data-route="${boardRoute}">View Artist Board ${icon('arrow', 14)}</a>` : isOwner ? `<p class="profile-bio-empty">Your Artist profile is empty until you create a board.</p><button class="primary-button" type="button" data-action="create-board" ${state.usernameLoading ? 'disabled' : ''}>Create your Artist Board ${icon('arrow', 14)}</button>` : `<p class="profile-bio-empty">This Artist hasn’t created a board yet.</p>`}
-      ${isOwner && board ? `<button class="quiet-button" type="button" data-action="edit-profile">${icon('edit', 14)} Edit Profile</button>` : ''}
+  const busy = state.usernameLoading || state.authActionLoading ? 'disabled' : '';
+  const editing = isOwner && state.editingProfile && !isArtist;
+  return `<header class="sr-profile-header">
+    ${renderProfileAvatar(image, name, profile.username, true)}
+    <div class="sr-profile-id">
+      <div class="sr-profile-topline">
+        <h1 class="sr-profile-username">@${escapeHTML(profile.username)}</h1>
+        ${isOwner ? `<div class="sr-profile-owner-actions">
+          ${!editing && (!isArtist || board) ? `<button class="quiet-button sr-edit" type="button" data-action="edit-profile" data-testid="button-edit-profile">${icon('edit', 13)} Edit Profile</button>` : ''}
+          <a class="icon-button sr-settings" href="${hrefFor('/settings')}" data-route="/settings" data-testid="link-settings" aria-label="Account and security settings" title="Account &amp; Security">${icon('settings', 18)}</a>
+          <button class="icon-button sr-switch" type="button" data-action="switch-account" ${busy} aria-label="Sign in to a different account" title="${state.authActionLoading ? 'Signing out…' : 'Switch account (signs you out first)'}">${icon('logout', 17)}</button>
+        </div>` : ''}
+      </div>
+      <p class="sr-profile-name">${escapeHTML(name)} <span class="sr-profile-role">${isArtist ? (board ? escapeHTML(board.discipline) + ' · Artist' : 'Artist') : 'Fan'}</span></p>
+      ${bio ? `<p class="sr-profile-bio">${escapeHTML(bio)}</p>` : isOwner && !isArtist ? '<p class="sr-profile-bio sr-muted">Add a short biography with Edit Profile.</p>' : ''}
+      ${!isArtist && profile.interests ? `<p class="sr-profile-interests">${escapeHTML(profile.interests)}</p>` : ''}
+      ${isArtist ? (board ? `<a class="sr-board-link" href="${hrefFor(boardRoute)}" data-route="${boardRoute}" data-testid="link-artist-board">${icon('artists', 14)} Official Board ${icon('arrow', 12)}</a>`
+        : isOwner ? `<button class="primary-button sr-create-board" type="button" data-action="create-board" ${state.usernameLoading ? 'disabled' : ''}>Create your Artist Board ${icon('arrow', 14)}</button>`
+        : '<p class="sr-profile-bio sr-muted">This Artist hasn’t created a Board yet.</p>') : ''}
+      ${renderProfileFollowing(profile, isOwner)}
     </div>
-    ${isOwner && !board ? renderUsernameChange(profile) : ''}
-  </div>
-  ${renderPublicShelves(profile.id)}
-  <section class="profile-board-section"><h2 class="section-heading">Fan Posts</h2>${posts.length ? `<div class="post-list">${posts.map((post) => renderPostCard(post)).join('')}</div>` : renderEmpty('No Fan posts yet.', board ? 'Fan posts on this Artist Board will appear here.' : 'Create an Artist Board to give Fans a place to share.')}</section>`;
+  </header>
+  ${isOwner && state.authActionLoading ? '<p class="field-hint" role="status">Signing out…</p>' : ''}
+  ${renderProfileStatus(profile.id)}
+  ${editing ? `<div class="sr-profile-editor">${renderFanProfileForm(profile)}${renderUsernameChange(profile)}</div>` : ''}
+  ${isOwner && isArtist && !board ? `<div class="sr-profile-editor">${renderUsernameChange(profile)}</div>` : ''}`;
 }
 
-function renderProfileSwitcher(account) {
-  return `<section class="switcher-section" aria-labelledby="switcher-title">
-    <div class="switcher-heading"><h2 class="switcher-title" id="switcher-title">Your account</h2><span class="switcher-caption">@${escapeHTML(account.username)} · ${escapeHTML(account.role)}</span></div>
-    <div class="switcher-footer"><button class="outline-button" type="button" data-action="switch-account" ${state.usernameLoading || state.authActionLoading ? 'disabled' : ''}>${state.authActionLoading ? 'Signing out…' : 'Sign in to a different account'}</button></div>
-    <p class="form-note">Switching accounts signs you out first. Your boards, posts, and collections are saved.</p>
-  </section>`;
+function renderProfilePage(profile, isOwner) {
+  return `<section class="sr-profile" data-testid="profile-${escapeHTML(profile.id)}">${renderProfileHeader(profile, isOwner)}${renderProfileTabs(profile, isOwner)}</section>`;
 }
 
 function renderVisitorProfile() {
-  const tab = state.profileActivityTabs.visitor || 'posts';
-  const tabContent = tab === 'reposts'
-    ? renderEmpty('No reposts yet.', 'Reposts you share will appear here after you join.')
-    : tab === 'shelves'
-      ? renderEmpty('Your shelves are empty.', 'Shelves you create will appear here after you join.')
-      : renderEmpty('No posts yet.', 'Posts you share will appear here after you join.');
-  return `<section class="profile-page visitor-profile-page">
-    <p class="eyebrow">Your corner</p><h1 class="page-title">Profile</h1><p class="page-subtitle">A personal page for your work, interests, and collections.</p>
-    <div class="profile-card public-profile-card fan-profile-card visitor-profile-card">
-      <div class="fan-profile-header">
-        <div class="profile-card-head"><span class="profile-avatar profile-avatar-large visitor-profile-avatar" aria-hidden="true">${icon('profile', 28)}</span><div><h2 class="profile-name">Your username</h2><p class="profile-meta">Your name and username appear here</p><span class="role-pill">Fan or Artist</span></div></div>
-        <button class="primary-button profile-join-button" type="button" data-action="join">Join / Sign Up ${icon('arrow', 14)}</button>
-      </div>
-      <section class="profile-about"><h2 class="section-heading">About Me</h2><p class="profile-bio"><span class="profile-bio-empty">Your biography and artistic interests will appear here.</span></p><div class="profile-interests"><h3>Artistic interests</h3><p><span class="profile-bio-empty">Add your interests when you edit your profile.</span></p></div></section>
+  return `<section class="sr-profile sr-profile-guest">
+    <div class="sr-guest">
+      <span class="profile-avatar profile-avatar-large" aria-hidden="true">${icon('profile', 28)}</span>
+      <div><h1 class="sr-profile-username">Your profile</h1><p class="sr-profile-bio">Join Stillroom to keep your posts, reposts and Shelves in one place.</p>
+      <div class="sr-guest-actions"><button class="primary-button" type="button" data-action="join" data-testid="button-profile-join">Join Stillroom ${icon('arrow', 14)}</button><a class="quiet-button" href="${hrefFor('/login')}" data-route="/login" data-testid="link-profile-sign-in">Sign In</a></div></div>
     </div>
-    <section class="profile-artists-section"><div class="section-heading-row"><h2 class="section-heading">My Artists &amp; Pages</h2></div>${renderEmpty('No artists followed yet.', 'Artist Boards you choose to follow will appear here.')}</section>
-    <section class="profile-activity visitor-profile-activity">
-      <div class="profile-activity-heading"><h2 class="section-heading">Your activity</h2><div class="profile-tabs" role="tablist" aria-label="Visitor profile activity">
-        <button class="profile-tab" type="button" data-action="profile-activity-tab" data-profile-id="visitor" data-tab="posts" role="tab" aria-selected="${tab === 'posts'}">Posts</button>
-        <button class="profile-tab" type="button" data-action="profile-activity-tab" data-profile-id="visitor" data-tab="reposts" role="tab" aria-selected="${tab === 'reposts'}">Reposts</button>
-        <button class="profile-tab" type="button" data-action="profile-activity-tab" data-profile-id="visitor" data-tab="shelves" role="tab" aria-selected="${tab === 'shelves'}">Shelves</button>
-      </div></div>
-      ${tabContent}
-    </section>
   </section>`;
 }
 
 function renderProfile() {
   const account = activeAccount();
-  if (!account) {
-    return renderVisitorProfile();
-  }
-  const content = account.role === 'Artist'
-    ? renderArtistProfileContent(account, true)
-    : renderFanProfileContent(account, true);
-  return `<section><p class="eyebrow">Your corner</p><h1 class="page-title">Profile</h1><p class="page-subtitle">A profile without a popularity score.</p>
-    <div class="profile-account-controls"><a class="quiet-button" href="${hrefFor('/settings')}" data-route="/settings" data-testid="link-settings">${icon('edit', 14)} Account settings</a></div>
-    ${content}
-    ${renderProfileSwitcher(account)}
-  </section>`;
+  if (!account) return renderVisitorProfile();
+  return renderProfilePage(account, true);
 }
 
 function renderPublicProfile(accountId) {
   const profile = state.accounts.find((entry) => entry.id === accountId);
   if (!profile) {
-    return `<section><p class="eyebrow">Member profile</p><h1 class="page-title">Profile not found.</h1><p class="page-subtitle">This profile isn’t available in this session.</p>${renderEmpty('No profile found.')}</section>`;
+    return `<section class="sr-profile"><h1 class="sr-profile-username">Profile not found.</h1>${renderProfileQuietEmpty('This profile isn’t available in this session.')}</section>`;
   }
-  const isOwner = activeAccount()?.id === profile.id;
-  const title = profile.role === 'Artist' ? (boardForOwner(profile.id)?.artistName || profile.name) : profile.name;
-  const content = profile.role === 'Artist'
-    ? renderArtistProfileContent(profile, isOwner)
-    : renderFanProfileContent(profile, isOwner);
-  return `<section><p class="eyebrow">${isOwner ? 'Your profile' : 'A member of Stillroom'}</p><h1 class="page-title">${escapeHTML(title)}</h1>${content}${isOwner ? `<div class="profile-owner-settings"><a class="text-link" href="${hrefFor('/profile')}" data-route="/profile">Account settings ${icon('arrow', 14)}</a></div>` : ''}</section>`;
+  return renderProfilePage(profile, activeAccount()?.id === profile.id);
 }
 
 function beginProfileEdit() {
@@ -3687,7 +3689,7 @@ app?.addEventListener('click', (event) => {
     cancelProfileEdit();
   } else if (action === 'profile-activity-tab') {
     const profileId = target.dataset.profileId;
-    const profile = state.accounts.find((entry) => entry.id === profileId && entry.role === 'Fan');
+    const profile = state.accounts.find((entry) => entry.id === profileId && ['Fan', 'Artist'].includes(entry.role));
     if (profile && ['posts', 'reposts', 'shelves'].includes(target.dataset.tab)) {
       state.profileActivityTabs[profile.id] = target.dataset.tab;
       state.contentPage = 0;

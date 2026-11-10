@@ -374,6 +374,140 @@ test('failed public refresh preserves existing posts, boards and profiles', asyn
   assert.match(h.run('state.contentRefreshError'), /HTTP 500/);
 });
 
+test('compact Fan profile shows identity and owner-only editing, Settings and private Artists', () => {
+  const h = harness('/profile');
+  h.run(`
+    state.accounts[0].biography = 'Personal biography';
+    state.accounts[0].interests = 'Film and music';
+    state.followedArtistsByFan = { fan: ['artist'] };
+  `);
+  const owner = h.run('renderProfile()');
+  assert.match(owner, /@fan/);
+  assert.match(owner, /Personal biography/);
+  assert.match(owner, /Film and music/);
+  assert.match(owner, /data-action="edit-profile"/);
+  assert.match(owner, /data-route="\/settings"/);
+  assert.match(owner, /data-action="switch-account"/);
+  assert.match(owner, /sr-following-face/);
+  assert.match(owner, /data-route="\/board\/board"/);
+  h.run(`state.activeAccountId = 'artist';`);
+  const other = h.run(`renderPublicProfile('fan')`);
+  assert.doesNotMatch(other, /data-action="edit-profile"|data-route="\/settings"|sr-following-face|data-action="switch-account"/);
+});
+
+test('profile Shelf tabs include private Shelves only for their owner', () => {
+  const h = harness();
+  h.run(`
+    state.profileActivityTabs.fan = 'shelves';
+    state.shelves = [
+      { id: 'private-id', ownerId: 'fan', title: 'Private title', visibility: 'private', postIds: [] },
+      { id: 'public-id', ownerId: 'fan', title: 'Public title', visibility: 'public', postIds: [] }
+    ];
+  `);
+  assert.match(h.run(`renderPublicProfile('fan')`), /Private title/);
+  assert.match(h.run(`renderPublicProfile('fan')`), /data-action="create-shelf"/);
+  for (const account of ['artist', null]) {
+    h.context.viewer = account;
+    h.run(`state.activeAccountId = viewer;`);
+    const other = h.run(`renderPublicProfile('fan')`);
+    assert.match(other, /Public title/);
+    assert.doesNotMatch(other, /Private title|private-id|data-action="create-shelf"/);
+  }
+});
+
+test('Artist profile keeps Board contributions, Board link and no publishing controls', () => {
+  const h = harness('/profile');
+  h.run(`
+    state.activeAccountId = 'artist';
+    state.boards[0].biography = 'Board biography';
+    state.boards[0].discipline = 'Music';
+    state.posts = [{ id: 'contribution', authorId: 'fan', authorUsername: 'fan',
+      boardId: 'board', content: 'Fan contribution', publishedAt: 1 }];
+  `);
+  const html = h.run('renderProfile()');
+  assert.match(html, /@artist/);
+  assert.match(html, /Music · Artist/);
+  assert.match(html, /Board biography/);
+  assert.match(html, /data-testid="link-artist-board"/);
+  assert.match(html, /data-route="\/post\/contribution"/);
+  assert.doesNotMatch(html, /data-action="(?:create-post|publish-post|start-post)"/);
+  h.run(`state.profileActivityTabs.artist = 'reposts';`);
+  assert.equal(h.run('contentSelection().profileId'), 'artist');
+  assert.equal(h.run('contentSelection().repostsBy'), 'artist');
+});
+
+test('own Fan profile requests private followed-Board metadata but public profiles do not', () => {
+  const h = harness('/profile');
+  assert.equal(h.run('contentSelection().artistList'), 'true');
+  h.run(`state.route = '/profile/fan'; state.activeAccountId = 'artist';`);
+  assert.equal(h.run('contentSelection().artistList'), undefined);
+});
+
+test('profile Edit action still opens original forms and Cancel retains profile data', () => {
+  const h = harness();
+  h.run('beginProfileEdit()');
+  assert.equal(h.run('state.editingProfile'), true);
+  const html = h.run('renderProfile()');
+  assert.match(html, /data-form="profile"/);
+  assert.match(html, /data-action="open-username-editor"/);
+  assert.match(html, /data-action="cancel-profile-edit"/);
+  h.run('cancelProfileEdit()');
+  assert.equal(h.run('state.editingProfile'), false);
+  assert.equal(h.run('activeAccount().username'), 'fan');
+  h.run(`state.activeAccountId = 'artist'; beginProfileEdit();`);
+  assert.equal(h.run('state.route'), '/artists/edit');
+  assert.equal(h.run('state.boardDraft.artistName'), 'Board');
+});
+
+test('profile grid preserves image/video/text links, original authors and Board credits', () => {
+  const h = harness();
+  h.run(`state.posts = [
+    { id: 'image', authorId: 'fan', authorUsername: 'fan', boardId: 'board', content: '', publishedAt: 1, media: { type: 'image', url: '/image' } },
+    { id: 'video', authorId: 'fan', authorUsername: 'fan', boardId: 'board', content: '', publishedAt: 2, media: { type: 'video', url: '/video' } },
+    { id: 'text', authorId: 'fan', authorUsername: 'fan', boardId: 'board', content: '<script>unsafe</script>', publishedAt: 3 }
+  ];`);
+  const html = h.run('renderProfile()');
+  for (const id of ['image', 'video', 'text']) assert.match(html, new RegExp(`data-route="/post/${id}"`));
+  assert.match(html, /<img class="sr-tile-media"/);
+  assert.match(html, /<video class="sr-tile-media"/);
+  assert.match(html, /&lt;script&gt;unsafe&lt;\/script&gt;/);
+  assert.match(html, /sr-tile-author">@fan/);
+  assert.match(html, /sr-tile-board">on Board/);
+});
+
+test('own repost profile grid preserves confirmation, pending and error feedback', () => {
+  const h = harness();
+  h.run(`
+    state.accounts.push({ id: 'other', role: 'Fan', name: 'Other', username: 'other' });
+    state.posts = [{ id: 'post', authorId: 'other', authorUsername: 'other', boardId: 'board', content: 'Post', publishedAt: 1 }];
+    state.reposts = [{ id: 'repost', postId: 'post', userId: 'fan', repostedAt: 2 }];
+    state.profileActivityTabs.fan = 'reposts';
+  `);
+  assert.match(h.run('renderProfile()'), /data-action="toggle-repost"/);
+  h.run(`toggleRepost('post')`);
+  assert.match(h.run('renderProfile()'), /data-action="confirm-repost"/);
+  assert.match(h.run('renderProfile()'), /data-action="cancel-repost"/);
+  h.run(`state.repostConfirm = null; state.repostPending = { postId: 'post', userId: 'fan' };`);
+  assert.match(h.run('renderProfile()'), /Undoing…/);
+  h.run(`state.repostPending = null; state.repostStatus = { userId: 'fan', kind: 'error', message: 'Could not undo.' };`);
+  assert.match(h.run('renderProfile()'), /role="alert">Could not undo/);
+  h.run(`state.activeAccountId = 'other';`);
+  assert.doesNotMatch(h.run(`renderPublicProfile('fan')`), /data-action="toggle-repost"|Could not undo/);
+});
+
+test('profile empty states and tab labels are compact and accessible without fake identities', () => {
+  const h = harness();
+  const own = h.run('renderProfile()');
+  assert.match(own, /No posts yet/);
+  assert.doesNotMatch(own, /Your corner|About Me|class="empty-state"/);
+  for (const label of ['Posts', 'Reposts', 'Shelves']) assert.match(own, new RegExp(`aria-label="${label}"`));
+  h.run(`state.activeAccountId = null;`);
+  const guest = h.run('renderProfile()');
+  assert.match(guest, /Join Stillroom/);
+  assert.match(guest, /data-route="\/login"/);
+  assert.doesNotMatch(guest, /@fan|@artist|data-action="edit-profile"|data-route="\/settings"/);
+});
+
 test('session change removes private DOM immediately while the old bootstrap is pending', () => {
   const h = harness();
   h.run(`
