@@ -40,6 +40,12 @@ export function contentQuery(selection = {}) {
 export function getBootstrap(selection = {}) {
   return apiRequest(`/social/bootstrap${contentQuery(selection)}`);
 }
+export function getComments(postId, cursor) {
+  return apiRequest(`/social/comments${contentQuery({ postId, cursor })}`);
+}
+export function getShelves({ ownerId, postId, page = 0 } = {}) {
+  return apiRequest(`/social/shelves${contentQuery({ ownerId, postId, page })}`);
+}
 
 export function runAction(action, payload = {}, selection = {}) {
   return apiRequest(`/social/actions${contentQuery(selection)}`, {

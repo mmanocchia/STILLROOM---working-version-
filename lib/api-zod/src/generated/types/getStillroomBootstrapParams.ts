@@ -5,12 +5,21 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { GetStillroomBootstrapArtistList } from './getStillroomBootstrapArtistList';
 import type { GetStillroomBootstrapCategory } from './getStillroomBootstrapCategory';
 import type { GetStillroomBootstrapFollowed } from './getStillroomBootstrapFollowed';
 import type { GetStillroomBootstrapMine } from './getStillroomBootstrapMine';
+import type { GetStillroomBootstrapShelfList } from './getStillroomBootstrapShelfList';
 import type { GetStillroomBootstrapView } from './getStillroomBootstrapView';
 
 export type GetStillroomBootstrapParams = {
+/**
+ * @minimum 0
+ * @maximum 50000
+ */
+shelfPage?: number;
+shelfList?: GetStillroomBootstrapShelfList;
+artistList?: GetStillroomBootstrapArtistList;
 view?: GetStillroomBootstrapView;
 /**
  * @maxLength 8192

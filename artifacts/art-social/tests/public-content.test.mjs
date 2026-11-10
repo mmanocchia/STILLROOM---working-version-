@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { appendPublicSnapshot } from '../src/publicContent.js';
+import { appendPublicSnapshot, patchInteraction } from '../src/publicContent.js';
 
 // Pure unit fixtures, never inserted into PostgreSQL or displayed in the app.
 const snapshot = (postIds, userId = null) => ({
@@ -52,4 +52,44 @@ test('Explore retains Artists and empty Boards when the post source is exhausted
   assert.deepEqual(merged.discovery.artistIds, ['empty-artist', 'another-artist']);
   assert.equal(merged.boards.some((board) => board.id === 'empty-board'), true);
   assert.equal(merged.posts[0].id, 'one');
+});
+
+test('targeted comments update every cached card without replacing the Feed window', () => {
+  const previous = snapshot(['one', 'two'], 'me');
+  previous.comments = [{ id: 'edit', postId: 'one', createdAt: 1, content: 'before' },
+    { id: 'delete', postId: 'one', createdAt: 2 }];
+  const incoming = { ...snapshot(['one'], 'me'), interactionPostId: 'one',
+    commentResult: { id: 'edit', postId: 'one', createdAt: 1, content: 'after' },
+    deletedCommentId: 'delete' };
+  const patched = patchInteraction(previous, incoming, 'comment.save', { commentId: 'edit' });
+  assert.deepEqual(patched.posts.map((post) => post.id), ['one', 'two']);
+  assert.equal(patched.comments.find((comment) => comment.id === 'edit').content, 'after');
+  assert.equal(patched.comments.some((comment) => comment.id === 'delete'), false);
+});
+
+test('undo replaces only the actor relationship, not original content or other reposts', () => {
+  const previous = snapshot(['one'], 'me');
+  previous.reposts = [{ id: 'mine', userId: 'me', postId: 'one' }, { id: 'theirs', userId: 'other', postId: 'one' }];
+  previous.discovery.repostIds = ['mine', 'theirs'];
+  const incoming = { ...snapshot(['one'], 'me'), interactionPostId: 'one', reposts: [] };
+  const patched = patchInteraction(previous, incoming, 'repost.set', { active: false });
+  assert.deepEqual(patched.reposts.map((row) => row.id), ['theirs']);
+  assert.deepEqual(patched.discovery.repostIds, ['theirs']);
+  assert.equal(patched.posts.length, 1);
+});
+
+test('targeted updates never merge private state across identities', () => {
+  const previous = { ...snapshot(['one'], 'first'), shelves: [{ id: 'private', visibility: 'private' }] };
+  const incoming = { ...snapshot(['one'], 'second'), interactionPostId: 'one', shelves: [] };
+  assert.deepEqual(patchInteraction(previous, incoming, 'shelf.setPosts'), incoming);
+});
+
+test('commenting or saving does not hide an existing actor repost from the Feed', () => {
+  const previous = snapshot(['one'], 'me');
+  previous.reposts = [{ id: 'mine', userId: 'me', postId: 'one' }];
+  previous.discovery.repostIds = ['mine'];
+  const incoming = { ...snapshot(['one'], 'me'), interactionPostId: 'one', reposts: previous.reposts };
+  for (const action of ['comment.save', 'shelf.setPosts']) {
+    assert.deepEqual(patchInteraction(previous, incoming, action, { commentId: 'edited' }).discovery.repostIds, ['mine']);
+  }
 });

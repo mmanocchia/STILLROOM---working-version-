@@ -9,9 +9,10 @@ const cursorSchema = z.object({
   version: z.literal(1),
   scope: z.string().length(64),
   snapshot: timestamp,
-  posts: position.extend({ id: z.string().uuid() }).nullable(),
+  posts: position.extend({ id: z.string().uuid() }).nullable().optional(),
   artists: position.nullable(),
   boards: position.extend({ id: z.string().uuid() }).nullable(),
+  reposts: position.extend({ id: z.string().uuid() }).nullable().optional(),
 }).strict();
 export type DiscoveryCursor = z.infer<typeof cursorSchema>;
 export type CursorPosition = z.infer<typeof position>;

@@ -21,14 +21,18 @@ import type {
 
 import type {
   ApiFailureResponse,
+  CommentPage,
   CompleteStillroomUpload200,
   CreateStillroomProfile201,
   GetCurrentUser200,
   GetStillroomBootstrapParams,
+  GetStillroomCommentsParams,
+  GetStillroomShelvesParams,
   HealthStatus,
   ProfileOnboardingInput,
   RequestStillroomUpload201,
   RunStillroomActionParams,
+  ShelfPage,
   SocialActionInput,
   StillroomBootstrap,
   UploadCompleteInput,
@@ -226,6 +230,174 @@ export const useCreateStillroomProfile = <TError = ErrorType<ApiFailureResponse>
       > => {
       return useMutation(getCreateStillroomProfileMutationOptions(options));
     }
+
+export const getGetStillroomCommentsUrl = (params: GetStillroomCommentsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/social/comments?${stringifiedParams}` : `/api/social/comments`
+}
+
+/**
+ * @summary Read public comments with author metadata
+ */
+export const getStillroomComments = async (params: GetStillroomCommentsParams, options?: Parameters<typeof customFetch>[1]): Promise<CommentPage> => {
+
+  return customFetch<CommentPage>(getGetStillroomCommentsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetStillroomCommentsQueryKey = (params?: GetStillroomCommentsParams,) => {
+    return [
+    `/api/social/comments`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetStillroomCommentsQueryOptions = <TData = Awaited<ReturnType<typeof getStillroomComments>>, TError = ErrorType<ApiFailureResponse>>(params: GetStillroomCommentsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStillroomComments>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStillroomCommentsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStillroomComments>>> = ({ signal }) => getStillroomComments(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStillroomComments>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStillroomCommentsQueryResult = NonNullable<Awaited<ReturnType<typeof getStillroomComments>>>
+export type GetStillroomCommentsQueryError = ErrorType<ApiFailureResponse>
+
+
+/**
+ * @summary Read public comments with author metadata
+ */
+
+export function useGetStillroomComments<TData = Awaited<ReturnType<typeof getStillroomComments>>, TError = ErrorType<ApiFailureResponse>>(
+ params: GetStillroomCommentsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStillroomComments>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStillroomCommentsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetStillroomShelvesUrl = (params?: GetStillroomShelvesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/social/shelves?${stringifiedParams}` : `/api/social/shelves`
+}
+
+/**
+ * @summary Read public or owned Shelf summaries
+ */
+export const getStillroomShelves = async (params?: GetStillroomShelvesParams, options?: Parameters<typeof customFetch>[1]): Promise<ShelfPage> => {
+
+  return customFetch<ShelfPage>(getGetStillroomShelvesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetStillroomShelvesQueryKey = (params?: GetStillroomShelvesParams,) => {
+    return [
+    `/api/social/shelves`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetStillroomShelvesQueryOptions = <TData = Awaited<ReturnType<typeof getStillroomShelves>>, TError = ErrorType<ApiFailureResponse>>(params?: GetStillroomShelvesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStillroomShelves>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStillroomShelvesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStillroomShelves>>> = ({ signal }) => getStillroomShelves(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStillroomShelves>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStillroomShelvesQueryResult = NonNullable<Awaited<ReturnType<typeof getStillroomShelves>>>
+export type GetStillroomShelvesQueryError = ErrorType<ApiFailureResponse>
+
+
+/**
+ * @summary Read public or owned Shelf summaries
+ */
+
+export function useGetStillroomShelves<TData = Awaited<ReturnType<typeof getStillroomShelves>>, TError = ErrorType<ApiFailureResponse>>(
+ params?: GetStillroomShelvesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStillroomShelves>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStillroomShelvesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getGetStillroomBootstrapUrl = (params?: GetStillroomBootstrapParams,) => {
   const normalizedParams = new URLSearchParams();

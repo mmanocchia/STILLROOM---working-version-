@@ -5,12 +5,21 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { RunStillroomActionArtistList } from './runStillroomActionArtistList';
 import type { RunStillroomActionCategory } from './runStillroomActionCategory';
 import type { RunStillroomActionFollowed } from './runStillroomActionFollowed';
 import type { RunStillroomActionMine } from './runStillroomActionMine';
+import type { RunStillroomActionShelfList } from './runStillroomActionShelfList';
 import type { RunStillroomActionView } from './runStillroomActionView';
 
 export type RunStillroomActionParams = {
+/**
+ * @minimum 0
+ * @maximum 50000
+ */
+shelfPage?: number;
+shelfList?: RunStillroomActionShelfList;
+artistList?: RunStillroomActionArtistList;
 view?: RunStillroomActionView;
 /**
  * @maxLength 8192

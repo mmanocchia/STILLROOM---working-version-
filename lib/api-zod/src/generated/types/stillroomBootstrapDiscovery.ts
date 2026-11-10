@@ -10,4 +10,5 @@ export type StillroomBootstrapDiscovery = {
   artistIds: string[];
   boardIds: string[];
   postIds: string[];
+  repostIds?: string[];
 };

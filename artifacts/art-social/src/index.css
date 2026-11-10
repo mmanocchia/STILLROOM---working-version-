@@ -1,3 +1,11 @@
+.comment-avatar { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex: 0 0 28px; }
+.comment-avatar-empty { display: inline-grid; place-items: center; background: #E4F6F4; color: #159A95; font-size: 12px; }
+.comment-head { flex-wrap: wrap; align-items: center; gap: 8px; }
+.comment-role { font: 500 10px/1.4 Inter, sans-serif; color: #526c70; }
+.comment-role-official { color: #087c78; background: #E4F6F4; border-radius: 5px; padding: 2px 5px; }
+.shelf-card-mark, .my-space-shelf-cover { overflow: hidden; }
+.shelf-cover-media { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+.interaction-prompt .shelf-signup-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 :root {
   font-family: 'Inter', sans-serif;
   color: #172E32;

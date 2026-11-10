@@ -58,8 +58,63 @@ export const CreateStillroomProfileResponse = zod.object({
 
 
 /**
+ * @summary Read public comments with author metadata
+ */
+export const getStillroomCommentsQueryCursorMax = 1024;
+
+
+
+export const GetStillroomCommentsQueryParams = zod.object({
+  "postId": zod.coerce.string().uuid(),
+  "cursor": zod.coerce.string().max(getStillroomCommentsQueryCursorMax).optional()
+})
+
+export const GetStillroomCommentsResponse = zod.object({
+  "comments": zod.array(zod.record(zod.string(), zod.unknown()).describe('Existing vanilla SPA record shape, containing IDs and display fields but no credentials or storage object paths.')),
+  "pagination": zod.object({
+  "page": zod.number().int().optional(),
+  "pageSize": zod.number().int(),
+  "hasMore": zod.boolean(),
+  "nextCursor": zod.string().nullish()
+})
+})
+
+
+/**
+ * @summary Read public or owned Shelf summaries
+ */
+export const getStillroomShelvesQueryOwnerIdMax = 200;
+
+export const getStillroomShelvesQueryPageDefault = 0;
+export const getStillroomShelvesQueryPageMin = 0;
+export const getStillroomShelvesQueryPageMax = 50000;
+
+
+
+export const GetStillroomShelvesQueryParams = zod.object({
+  "ownerId": zod.coerce.string().max(getStillroomShelvesQueryOwnerIdMax).optional(),
+  "postId": zod.coerce.string().uuid().optional(),
+  "page": zod.coerce.number().int().min(getStillroomShelvesQueryPageMin).max(getStillroomShelvesQueryPageMax).default(getStillroomShelvesQueryPageDefault)
+})
+
+export const GetStillroomShelvesResponse = zod.object({
+  "shelves": zod.array(zod.record(zod.string(), zod.unknown()).describe('Existing vanilla SPA record shape, containing IDs and display fields but no credentials or storage object paths.')),
+  "pagination": zod.object({
+  "page": zod.number().int().optional(),
+  "pageSize": zod.number().int(),
+  "hasMore": zod.boolean(),
+  "nextCursor": zod.string().nullish()
+})
+})
+
+
+/**
  * @summary Read public content and only the current member's private data
  */
+export const getStillroomBootstrapQueryShelfPageDefault = 0;
+export const getStillroomBootstrapQueryShelfPageMin = 0;
+export const getStillroomBootstrapQueryShelfPageMax = 50000;
+
 export const getStillroomBootstrapQueryCursorMax = 8192;
 
 export const getStillroomBootstrapQueryPageDefault = 0;
@@ -77,6 +132,9 @@ export const getStillroomBootstrapQueryQMax = 200;
 
 
 export const GetStillroomBootstrapQueryParams = zod.object({
+  "shelfPage": zod.coerce.number().int().min(getStillroomBootstrapQueryShelfPageMin).max(getStillroomBootstrapQueryShelfPageMax).default(getStillroomBootstrapQueryShelfPageDefault),
+  "shelfList": zod.enum(['true']).optional(),
+  "artistList": zod.enum(['true']).optional(),
   "view": zod.enum(['feed', 'explore']).optional(),
   "cursor": zod.coerce.string().max(getStillroomBootstrapQueryCursorMax).optional(),
   "page": zod.coerce.number().int().min(getStillroomBootstrapQueryPageMin).max(getStillroomBootstrapQueryPageMax).default(getStillroomBootstrapQueryPageDefault),
@@ -93,6 +151,21 @@ export const GetStillroomBootstrapQueryParams = zod.object({
 })
 
 export const GetStillroomBootstrapResponse = zod.object({
+  "commentPagination": zod.record(zod.string(), zod.object({
+  "page": zod.number().int().optional(),
+  "pageSize": zod.number().int(),
+  "hasMore": zod.boolean(),
+  "nextCursor": zod.string().nullish()
+})).optional(),
+  "shelfPagination": zod.object({
+  "page": zod.number().int().optional(),
+  "pageSize": zod.number().int(),
+  "hasMore": zod.boolean(),
+  "nextCursor": zod.string().nullish()
+}).optional(),
+  "interactionPostId": zod.string().optional(),
+  "commentResult": zod.record(zod.string(), zod.unknown()).optional().describe('Existing vanilla SPA record shape, containing IDs and display fields but no credentials or storage object paths.'),
+  "deletedCommentId": zod.string().nullish(),
   "pagination": zod.object({
   "page": zod.number().int(),
   "pageSize": zod.number().int(),
@@ -102,7 +175,8 @@ export const GetStillroomBootstrapResponse = zod.object({
   "discovery": zod.object({
   "artistIds": zod.array(zod.string()),
   "boardIds": zod.array(zod.string()),
-  "postIds": zod.array(zod.string())
+  "postIds": zod.array(zod.string()),
+  "repostIds": zod.array(zod.string()).optional()
 }).optional(),
   "userId": zod.string().nullable(),
   "profileId": zod.string().nullable(),
@@ -130,6 +204,10 @@ export const GetStillroomBootstrapResponse = zod.object({
 /**
  * @summary Perform an authenticated role- and ownership-checked social action
  */
+export const runStillroomActionQueryShelfPageDefault = 0;
+export const runStillroomActionQueryShelfPageMin = 0;
+export const runStillroomActionQueryShelfPageMax = 50000;
+
 export const runStillroomActionQueryCursorMax = 8192;
 
 export const runStillroomActionQueryPageDefault = 0;
@@ -147,6 +225,9 @@ export const runStillroomActionQueryQMax = 200;
 
 
 export const RunStillroomActionQueryParams = zod.object({
+  "shelfPage": zod.coerce.number().int().min(runStillroomActionQueryShelfPageMin).max(runStillroomActionQueryShelfPageMax).default(runStillroomActionQueryShelfPageDefault),
+  "shelfList": zod.enum(['true']).optional(),
+  "artistList": zod.enum(['true']).optional(),
   "view": zod.enum(['feed', 'explore']).optional(),
   "cursor": zod.coerce.string().max(runStillroomActionQueryCursorMax).optional(),
   "page": zod.coerce.number().int().min(runStillroomActionQueryPageMin).max(runStillroomActionQueryPageMax).default(runStillroomActionQueryPageDefault),
@@ -168,6 +249,21 @@ export const RunStillroomActionBody = zod.object({
 })
 
 export const RunStillroomActionResponse = zod.object({
+  "commentPagination": zod.record(zod.string(), zod.object({
+  "page": zod.number().int().optional(),
+  "pageSize": zod.number().int(),
+  "hasMore": zod.boolean(),
+  "nextCursor": zod.string().nullish()
+})).optional(),
+  "shelfPagination": zod.object({
+  "page": zod.number().int().optional(),
+  "pageSize": zod.number().int(),
+  "hasMore": zod.boolean(),
+  "nextCursor": zod.string().nullish()
+}).optional(),
+  "interactionPostId": zod.string().optional(),
+  "commentResult": zod.record(zod.string(), zod.unknown()).optional().describe('Existing vanilla SPA record shape, containing IDs and display fields but no credentials or storage object paths.'),
+  "deletedCommentId": zod.string().nullish(),
   "pagination": zod.object({
   "page": zod.number().int(),
   "pageSize": zod.number().int(),
@@ -177,7 +273,8 @@ export const RunStillroomActionResponse = zod.object({
   "discovery": zod.object({
   "artistIds": zod.array(zod.string()),
   "boardIds": zod.array(zod.string()),
-  "postIds": zod.array(zod.string())
+  "postIds": zod.array(zod.string()),
+  "repostIds": zod.array(zod.string()).optional()
 }).optional(),
   "userId": zod.string().nullable(),
   "profileId": zod.string().nullable(),

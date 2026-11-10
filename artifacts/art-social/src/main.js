@@ -1,6 +1,6 @@
 import './index.css';
-import { appendPublicSnapshot, PUBLIC_WINDOW_LIMIT } from './publicContent.js';
-import { createProfile, getBootstrap, runAction, uploadFile } from './api.js';
+import { appendPublicSnapshot, patchInteraction, PUBLIC_WINDOW_LIMIT } from './publicContent.js';
+import { createProfile, getBootstrap, getComments, getShelves, runAction, uploadFile } from './api.js';
 import { clerk, clerkAppearance, loadClerk } from './clerk.js';
 
 const app = document.querySelector('#app');
@@ -14,6 +14,17 @@ const navItems = [
 
 const state = {
   accounts: [],
+  commentPagination: {},
+  commentReaders: {},
+  commentReadErrors: {},
+  commentWindows: {},
+  shelfPage: 0,
+  shelfPagination: { page: 0, hasMore: false },
+  shelfPickerPage: 0,
+  shelfPickerHasMore: false,
+  shelfPickerBusy: false,
+  shelfPickerScope: [],
+  interactionPrompt: null,
   boards: [],
   posts: [],
   reposts: [],
@@ -130,6 +141,14 @@ let observedClerkSession = undefined;
 let authGeneration = 0;
 
 function clearAccountEditors() {
+  state.commentPagination = {};
+  state.commentReaders = {};
+  state.commentReadErrors = {};
+  state.commentWindows = {};
+  state.shelfPage = 0;
+  state.shelfPickerScope = [];
+  state.shelfPickerBusy = false;
+  state.interactionPrompt = null;
   state.contentPage = 0;
   state.contentCursor = null;
   state.discovery = null;
@@ -282,6 +301,8 @@ function applyBootstrap(data, { append = false } = {}) {
   state.discovery = data.discovery || null;
   state.contentPagination = data.pagination || { page: 0, pageSize: 20, hasMore: false };
   state.comments = data.comments || [];
+  state.commentPagination = data.commentPagination || {};
+  state.shelfPagination = data.shelfPagination || { page: 0, hasMore: false };
   state.reposts = data.reposts || [];
   state.shelves = data.shelves || [];
   state.followedArtistsByFan = data.followedArtistsByFan || {};
@@ -362,6 +383,7 @@ async function syncSession() {
   })().finally(() => {
     syncInFlight = null;
     if (generation !== authGeneration) void syncSession();
+    else if (state.activeAccountId && window.sessionStorage.getItem('stillroom.intent')) void resumeInteraction();
     else if (selectionChanged) void refreshPublicContent();
   });
   return syncInFlight;
@@ -369,19 +391,32 @@ async function syncSession() {
 
 async function persistAction(action, payload = {}) {
   // Mutations replace the snapshot: discard accumulated public cursors first.
-  if (['/', '/home', '/explore'].includes(state.route)) state.contentCursor = null;
+  const targeted = action.startsWith('comment.') || action.startsWith('repost.') || ['shelf.setPosts', 'shelf.addPost', 'shelf.removePost'].includes(action);
+  if (!targeted && ['/', '/home', '/explore'].includes(state.route)) state.contentCursor = null;
   contentRefreshId += 1;
   state.contentRefreshing = false;
   const generation = authGeneration;
   const selection = contentSelection();
   const selectionKey = JSON.stringify(selection);
-  const data = await runAction(action, payload, selection);
+  let data = await runAction(action, payload, selection);
   if (generation !== authGeneration) throw new Error('Your session changed. Please sign in and try again.');
   if (selectionKey !== JSON.stringify(contentSelection())) {
     await refreshPublicContent();
     return data;
   }
+  if (data.interactionPostId) {
+    const previousPagination = state.commentPagination;
+    data = patchInteraction({ userId: state.authUserId, profileId: state.activeAccountId,
+      posts: state.posts, comments: state.comments, reposts: state.reposts, shelves: state.shelves,
+      accounts: state.accounts, boards: state.boards, discovery: state.discovery,
+      pagination: state.contentPagination, shelfPagination: state.shelfPagination,
+      commentPagination: state.commentPagination }, data, action, payload);
+    if (state.commentWindows[data.interactionPostId] && !(action === 'comment.save' && !payload.commentId)) {
+      data.commentPagination[data.interactionPostId] = previousPagination[data.interactionPostId];
+    } else if (action === 'comment.save' && !payload.commentId) state.commentWindows[data.interactionPostId] = false;
+  }
   applyBootstrap(data);
+  state.contentRefreshError = '';
   render();
   return data;
 }
@@ -423,7 +458,7 @@ async function startStillroom() {
   }
 }
 
-function navigate(path, { replace = false } = {}) {
+function navigate(path, { replace = false, refresh = true } = {}) {
   const changed = state.route !== path;
   if (path !== '/shelves') {
     state.shelfSignupPromptOpen = false;
@@ -442,16 +477,20 @@ function navigate(path, { replace = false } = {}) {
   state.route = path;
   if (changed) {
     state.contentPage = 0;
+    state.shelfPage = 0;
     state.contentCursor = null;
   }
   render();
-  if (changed) {
+  if (changed && refresh) {
     void refreshPublicContent();
   }
 }
 
 function contentSelection() {
   const selection = { page: state.contentPage || 0 };
+  selection.shelfPage = state.shelfPage || 0;
+  if (state.route === '/shelves') selection.shelfList = 'true';
+  if (state.route === '/artists') selection.artistList = 'true';
   if (['/', '/home', '/explore'].includes(state.route)) {
     selection.page = 0;
     selection.view = state.route === '/explore' ? 'explore' : 'feed';
@@ -494,6 +533,7 @@ async function refreshPublicContent({ background = false, append = false } = {})
     state.contentRefreshError = '';
   } catch (error) {
     if (generation !== authGeneration || requestId !== contentRefreshId || key !== JSON.stringify(contentSelection())) return;
+    if (error.status === 404 && selection.shelfId) state.shelves = state.shelves.filter((shelf) => shelf.id !== selection.shelfId);
     state.contentRefreshError = error.message || 'Could not refresh public content.';
   } finally {
     if (generation === authGeneration && requestId === contentRefreshId) {
@@ -517,13 +557,26 @@ function renderPublicContent() {
 }
 
 function publicEditorActive() {
-  return Boolean(state.postEditor || state.boardDraft || state.profileDraft || state.shelfDraft
+  return Boolean(state.shelfPickerPostId || state.shelfPickerBusy || state.interactionPrompt
+    || state.expandedCommentPostIds.some((id) => state.commentWindows[id])
+    || Object.keys(state.commentReaders).length || state.postEditor || state.boardDraft || state.profileDraft || state.shelfDraft
     || state.postPublishing || state.postMediaLoading || state.boardLoading || state.commentPending
     || state.shelfLoading || state.usernameLoading || state.editingProfile || state.repostPending
     || document.activeElement?.matches?.('input, textarea, select, [contenteditable="true"]'));
 }
 
 function renderContentPagination() {
+  if (state.route === '/shelves' || (state.route.startsWith('/profile')
+    && state.profileActivityTabs[state.route.split('/')[2] || state.activeAccountId] === 'shelves')) {
+    const page = state.shelfPage || 0;
+    if (!page && !state.shelfPagination.hasMore && !state.contentRefreshError) return '';
+    return `<nav class="content-pagination" aria-label="Shelf pages">
+      ${state.contentRefreshError ? `<p class="inline-error" role="alert">${escapeHTML(state.contentRefreshError)} <button class="text-button" type="button" data-action="refresh-public-content">Try again</button></p>` : ''}
+      <button class="quiet-button" type="button" data-action="shelf-page" data-page="${Math.max(0, page - 1)}" ${!page || state.contentRefreshing ? 'disabled' : ''}>Previous</button>
+      <span role="status">${state.contentRefreshing ? 'Loading…' : `Page ${page + 1}`}</span>
+      <button class="quiet-button" type="button" data-action="shelf-page" data-page="${page + 1}" ${!state.shelfPagination.hasMore || state.contentRefreshing ? 'disabled' : ''}>Next</button>
+    </nav>`;
+  }
   if (['/', '/home', '/explore'].includes(state.route)) {
     const pending = state.contentRefreshing || state.postPublishing || state.repostPending || state.commentPending || state.shelfLoading;
     const hasMore = state.contentPagination?.hasMore && state.contentPagination?.nextCursor;
@@ -574,6 +627,9 @@ function cancelShelfOperation() {
 function activeAccount() {
   return state.accounts.find((account) => account.id === state.activeAccountId) || null;
 }
+function canComment(account = activeAccount()) {
+  return ['Fan', 'Artist'].includes(account?.role);
+}
 
 function boardForOwner(ownerId) {
   return state.boards.find((board) => board.ownerId === ownerId) || null;
@@ -596,10 +652,13 @@ function commentDraftKey(userId, postId) {
 }
 
 function homeFeedItems(followedIds = null) {
+  const originalIds = state.discovery ? new Set(state.discovery.postIds) : null;
+  const eventIds = state.discovery?.repostIds ? new Set(state.discovery.repostIds) : null;
   const items = state.posts
-    .filter(isVisibleFanPost)
+    .filter((post) => isVisibleFanPost(post) && (!originalIds || originalIds.has(post.id)))
     .map((post) => ({ type: 'post', key: `post:${post.id}`, post, createdAt: post.publishedAt }));
   for (const repost of state.reposts) {
+    if (eventIds && !eventIds.has(repost.id)) continue;
     const post = state.posts.find((entry) => entry.id === repost.postId);
     const reposter = state.accounts.find((entry) => entry.id === repost.userId);
     if (!post || reposter?.role !== 'Fan' || !isVisibleFanPost(post)) continue;
@@ -924,6 +983,7 @@ function renderShell(content, pageTitle) {
       <main class="page-content page-enter">${renderAuthNotice()}${content}${renderContentPagination()}</main>
     </div>
     ${renderShelfSignupPrompt()}
+    ${renderInteractionPrompt()}
     ${renderShelfPicker()}
   </div>`;
 }
@@ -944,23 +1004,77 @@ function renderShelfPicker() {
   if (!postId) return '';
   const account = activeAccount();
   const post = state.posts.find((entry) => entry.id === postId && isVisibleFanPost(entry));
-  const shelves = state.shelves.filter((shelf) => shelf.ownerId === account?.id);
+  const shelves = state.shelves.filter((shelf) => shelf.ownerId === account?.id && state.shelfPickerScope.includes(shelf.id));
   const preview = post
     ? escapeHTML(post.content?.trim().slice(0, 130) || (post.media?.type === 'video' ? 'Video post' : post.media?.type === 'image' ? 'Image post' : 'Fan post'))
     : 'This post is no longer available.';
-  const disabled = state.shelfLoading ? 'disabled' : '';
+  const disabled = state.shelfLoading || state.shelfPickerBusy ? 'disabled' : '';
   const checkboxes = shelves.map((shelf) => `<label class="shelf-picker-option"><input type="checkbox" name="shelfIds" value="${escapeHTML(shelf.id)}" ${state.shelfPickerSelection.includes(shelf.id) ? 'checked' : ''} ${disabled}><span><span class="shelf-picker-title">${escapeHTML(shelf.title)}</span><span class="shelf-picker-visibility">${shelf.visibility === 'public' ? 'Public' : 'Private'}</span></span></label>`).join('');
   return `<div class="shelf-modal-backdrop">
     <section class="shelf-picker" role="dialog" aria-modal="true" aria-labelledby="shelf-picker-title">
       <div class="shelf-picker-head"><div><p class="eyebrow">Keep close</p><h2 class="shelf-picker-heading" id="shelf-picker-title">Add to Shelf</h2></div><button class="icon-button" type="button" data-action="close-shelf-picker" aria-label="Close Shelf picker" ${disabled}>${icon('close', 17)}</button></div>
       <p class="shelf-picker-post">${preview}</p>
-      ${state.shelfPickerError ? `<p class="inline-error" role="alert">${escapeHTML(state.shelfPickerError)}</p>` : ''}
+      ${state.shelfPickerError ? `<p class="inline-error" role="alert">${escapeHTML(state.shelfPickerError)} <button class="text-button" type="button" data-action="retry-picker-shelves">Try again</button></p>` : ''}
       ${!post ? renderEmpty('Post unavailable.') : shelves.length ? `<form data-form="shelf-picker" data-post-id="${escapeHTML(post.id)}" novalidate ${state.shelfLoading ? 'aria-busy="true"' : ''}>
         <fieldset class="shelf-picker-list"><legend class="shelf-picker-legend">Choose one or more Shelves</legend>${checkboxes}</fieldset>
+        ${state.shelfPickerHasMore && state.shelfPickerScope.length < 1000 ? `<button class="text-button" type="button" data-action="more-picker-shelves" ${disabled}>${state.shelfPickerBusy ? 'Loading…' : 'Load More Shelves'}</button>` : ''}
         <div class="shelf-picker-actions"><button class="primary-button" type="submit" ${disabled}>${state.shelfLoading ? `<span class="registration-loading"><span class="loading-dot"></span>Saving…</span>` : `Save to Shelves ${icon('arrow', 14)}`}</button><button class="quiet-button" type="button" data-action="close-shelf-picker" ${disabled}>Cancel</button></div>
-      </form>` : `<div class="shelf-picker-empty">${renderEmpty('You haven’t created a Shelf yet.', 'Create one to save this post for later.') }<button class="primary-button" type="button" data-action="create-shelf-from-picker">Create a Shelf ${icon('arrow', 14)}</button></div>`}
+      </form>` : state.shelfPickerBusy ? '<p role="status">Loading your Shelves…</p>' : `<div class="shelf-picker-empty">${renderEmpty('You haven’t created a Shelf yet.', 'Create one to save this post for later.') }<button class="primary-button" type="button" data-action="create-shelf-from-picker">Create a Shelf ${icon('arrow', 14)}</button></div>`}
     </section>
   </div>`;
+}
+
+function renderInteractionPrompt() {
+  if (!state.interactionPrompt) return '';
+  return `<div class="shelf-signup-backdrop interaction-backdrop"><section class="shelf-signup-modal interaction-prompt" role="dialog" aria-modal="true" aria-labelledby="interaction-title">
+    <button class="shelf-signup-close" type="button" data-action="close-interaction-prompt" aria-label="Close sign-in prompt">${icon('close', 18)}</button>
+    <h2 class="shelf-signup-title" id="interaction-title">Make yourself at home.</h2>
+    <p class="shelf-signup-description">Sign in or join Stillroom to comment, repost, and save the work that inspires you.</p>
+    <div class="shelf-signup-actions"><button class="primary-button" type="button" data-action="interaction-auth" data-destination="login">Sign In</button>
+    <button class="outline-button" type="button" data-action="interaction-auth" data-role="Fan">Join as a Fan</button>
+    <button class="outline-button" type="button" data-action="interaction-auth" data-role="Artist">Join as an Artist</button></div>
+  </section></div>`;
+}
+function openInteractionPrompt(kind, postId) {
+  state.interactionPrompt = { kind, postId };
+  render();
+  requestAnimationFrame(() => app.querySelector('.interaction-prompt button')?.focus());
+}
+function closeInteractionPrompt() {
+  const prompt = state.interactionPrompt;
+  state.interactionPrompt = null;
+  render();
+  if (prompt?.postId) app.querySelector(`[data-post-id="${prompt.postId}"]`)?.focus();
+}
+function rememberInteraction(intent) {
+  window.sessionStorage.setItem('stillroom.intent', JSON.stringify({ ...intent, expiresAt: Date.now() + 15 * 60 * 1000 }));
+}
+async function resumeInteraction() {
+  const raw = window.sessionStorage.getItem('stillroom.intent');
+  window.sessionStorage.removeItem('stillroom.intent');
+  let intent;
+  try { intent = JSON.parse(raw); } catch { return; }
+  if (!intent || !Number.isFinite(intent.expiresAt) || intent.expiresAt < Date.now() || !['comment', 'repost', 'shelf', 'create-shelf'].includes(intent.kind)) return;
+  if (intent.kind === 'create-shelf') { navigate('/shelves/new'); return; }
+  if (!/^[0-9a-f-]{36}$/i.test(intent.postId || '')) return;
+  const generation = authGeneration;
+  state.dataLoading = true;
+  navigate(`/post/${encodeURIComponent(intent.postId)}`, { refresh: false });
+  await refreshPublicContent();
+  if (generation !== authGeneration) return;
+  state.dataLoading = false;
+  const post = state.posts.find((entry) => entry.id === intent.postId);
+  if (!post) { render(); return; }
+  if (intent.kind === 'comment') {
+    if (!state.expandedCommentPostIds.includes(post.id)) state.expandedCommentPostIds.push(post.id);
+    render();
+    app.querySelector('.comment-textarea')?.focus();
+  } else if (intent.kind === 'shelf') openShelfPicker(post.id);
+  else if (activeAccount()?.role === 'Fan') toggleRepost(post.id);
+  else {
+    state.authNotice = { kind: 'error', message: 'Reposting is available to Fan accounts. You can still join the conversation as an Artist.' };
+    render();
+  }
 }
 
 function renderShelfSignupPrompt() {
@@ -972,6 +1086,7 @@ function renderShelfSignupPrompt() {
       <h2 class="shelf-signup-title" id="shelf-signup-title">Join Stillroom to create your first Shelf.</h2>
       <p class="shelf-signup-description" id="shelf-signup-description">Start collecting the art, stories, and moments that inspire you.</p>
       <div class="shelf-signup-actions">
+        <button class="outline-button" type="button" data-action="signin-from-shelf-signup-prompt">Sign In</button>
         <button class="primary-button" type="button" data-action="join-from-shelf-signup-prompt" data-role="Fan" data-testid="button-join-as-fan-from-shelf">Join as a Fan</button>
         <button class="outline-button" type="button" data-action="join-from-shelf-signup-prompt" data-role="Artist" data-testid="button-join-as-artist-from-shelf">Join as an Artist</button>
       </div>
@@ -1072,13 +1187,13 @@ function renderPostMedia(media, username) {
 
 function renderCommentForm(post, comment = null) {
   const account = activeAccount();
-  if (account?.role !== 'Fan') return '';
+  if (!canComment(account)) return '';
   const editing = Boolean(comment);
   const key = editing ? comment.id : commentDraftKey(account.id, post.id);
   const value = editing ? state.commentEditor?.content || '' : state.commentDrafts[key] || '';
   const error = state.commentErrors[key] || '';
   const pending = state.commentPending;
-  const disabled = pending ? 'disabled' : '';
+  const disabled = pending || state.commentReaders[post.id] ? 'disabled' : '';
   const isPending = pending?.postId === post.id && pending?.userId === account.id
     && (editing ? pending.commentId === comment.id : pending.action === 'create');
   return `<form class="comment-form" data-form="comment" data-post-id="${escapeHTML(post.id)}" data-comment-id="${escapeHTML(comment?.id || '')}" novalidate ${isPending ? 'aria-busy="true"' : ''}>
@@ -1090,14 +1205,14 @@ function renderCommentForm(post, comment = null) {
 
 function renderCommentItem(comment) {
   const account = activeAccount();
-  const isOwner = account?.role === 'Fan' && account.id === comment.authorId;
+  const isOwner = canComment(account) && account.id === comment.authorId;
   const isEditing = isOwner && state.commentEditor?.commentId === comment.id;
   const isDeleting = isOwner && state.commentDeleteConfirmId === comment.id;
   const pending = state.commentPending?.commentId === comment.id;
   const disabled = state.commentPending ? 'disabled' : '';
   const profileRoute = `/profile/${encodeURIComponent(comment.authorId)}`;
   return `<li class="comment-item">
-    <div class="comment-head"><a class="comment-author" href="${hrefFor(profileRoute)}" data-route="${profileRoute}">@${escapeHTML(comment.authorUsername)}</a><span class="comment-date">${escapeHTML(formatPostDate(comment.createdAt))}${comment.updatedAt ? ' · edited' : ''}</span></div>
+    <div class="comment-head">${comment.profileImage ? `<img class="comment-avatar" src="${escapeHTML(comment.profileImage)}" alt="" loading="lazy">` : `<span class="comment-avatar comment-avatar-empty" aria-hidden="true">${escapeHTML(comment.authorUsername?.[0]?.toUpperCase() || '')}</span>`}<a class="comment-author" href="${hrefFor(profileRoute)}" data-route="${profileRoute}">@${escapeHTML(comment.authorUsername)}</a><span class="comment-role ${comment.officialArtist ? 'comment-role-official' : ''}" ${comment.officialArtist ? 'title="Official Artist Board owner"' : ''}>${escapeHTML(comment.authorRole || 'Fan')}${comment.officialArtist ? ' · Board owner' : ''}</span><span class="comment-date">${escapeHTML(formatPostDate(comment.createdAt))}${comment.updatedAt ? ' · edited' : ''}</span></div>
     ${isEditing ? renderCommentForm(state.posts.find((post) => post.id === comment.postId), comment) : `<p class="comment-content">${escapeHTML(comment.content)}</p>`}
     ${isOwner && !isEditing ? `<div class="comment-actions">${pending ? `<span class="post-saving" role="status">Updating comment…</span>` : isDeleting ? `<div class="comment-delete-confirm" role="alert"><span>Delete this comment?</span><button class="text-button text-danger" type="button" data-action="confirm-delete-comment" data-comment-id="${escapeHTML(comment.id)}" ${disabled}>Delete</button><button class="text-button" type="button" data-action="cancel-delete-comment" ${disabled}>Cancel</button></div>` : `<button class="text-button" type="button" data-action="edit-comment" data-comment-id="${escapeHTML(comment.id)}" ${disabled}>${icon('edit', 12)} Edit</button><button class="text-button text-danger" type="button" data-action="request-delete-comment" data-comment-id="${escapeHTML(comment.id)}" ${disabled}>${icon('trash', 12)} Delete</button>`}</div>` : ''}
   </li>`;
@@ -1117,8 +1232,10 @@ function renderCommentThread(post) {
   return `<section class="post-comments">
     <button class="text-button comments-toggle" type="button" data-action="toggle-comments" data-post-id="${escapeHTML(post.id)}" aria-expanded="${expanded}">${expanded ? 'Hide comments' : 'Comments'}</button>
     ${expanded ? `<div class="comment-thread">${status}${pending}
-      ${comments.length ? `<ol class="comment-list">${comments.map(renderCommentItem).join('')}</ol>` : `<div class="comment-empty">${renderEmpty('No comments yet.', account?.role === 'Fan' ? 'Be the first to add a note.' : 'There is nothing to read here yet.')}</div>`}
-      ${account?.role === 'Fan' ? renderCommentForm(post) : account?.role === 'Artist' ? `<p class="comment-read-only">Fan accounts can add comments.</p>` : `<button class="text-button guest-action-link" type="button" data-action="join" data-role="Fan">Join as Fan to comment ${icon('arrow', 13)}</button>`}
+      ${comments.length ? `<ol class="comment-list">${comments.map(renderCommentItem).join('')}</ol>` : `<div class="comment-empty">${renderEmpty('No comments yet.', canComment(account) ? 'Be the first to add a note.' : 'There is nothing to read here yet.')}</div>`}
+      ${state.commentReadErrors[post.id] ? `<p class="inline-error" role="alert">${escapeHTML(state.commentReadErrors[post.id])}<button class="text-button" type="button" data-action="retry-comments" data-post-id="${escapeHTML(post.id)}">Try again</button></p>` : ''}
+      ${state.commentReaders[post.id] ? '<p role="status">Loading comments…</p>' : state.commentPagination[post.id]?.hasMore ? `<button class="quiet-button" type="button" data-action="earlier-comments" data-post-id="${escapeHTML(post.id)}">Load earlier comments</button>` : ''}
+      ${canComment(account) ? renderCommentForm(post) : `<button class="text-button guest-action-link" type="button" data-action="request-comment" data-post-id="${escapeHTML(post.id)}">Sign In / Join to comment ${icon('arrow', 13)}</button>`}
     </div>` : ''}
   </section>`;
 }
@@ -1154,7 +1271,7 @@ function renderPostCard(post) {
     <div class="post-actions">
       <button class="text-button shelf-save-button" type="button" data-action="open-shelf-picker" data-post-id="${escapeHTML(post.id)}" ${state.shelfLoading ? 'disabled' : ''}>${icon('bookmark', 13)} Add to Shelf</button>
       ${account?.role === 'Fan' ? `<button class="text-button repost-button" type="button" data-action="toggle-repost" data-post-id="${escapeHTML(post.id)}" ${state.repostPending ? 'disabled' : ''}>${icon('repost', 13)} ${ownRepost ? 'Undo repost' : 'Repost'}</button>` : ''}
-      ${!account ? `<button class="text-button repost-button" type="button" data-action="join" data-role="Fan">${icon('repost', 13)} Join as Fan to repost</button>` : ''}
+      ${!account ? `<button class="text-button repost-button" type="button" data-action="toggle-repost" data-post-id="${escapeHTML(post.id)}">${icon('repost', 13)} Repost</button>` : ''}
       ${ownsPost ? (state.postPublishing
         ? `<span class="post-saving" role="status">${state.pendingPost?.postId === post.id ? 'Saving changes…' : 'Please wait for the post to finish publishing…'}</span>`
         : deleteConfirmation
@@ -1445,10 +1562,16 @@ function renderBoardDetail(boardId) {
   </section>`;
 }
 
+function renderShelfCover(shelf, size) {
+  if (!shelf.cover?.url) return icon('bookmark', size);
+  return shelf.cover.type === 'video'
+    ? `<video class="shelf-cover-media" src="${escapeHTML(shelf.cover.url)}" muted playsinline preload="metadata" aria-label="Saved video preview"></video>`
+    : `<img class="shelf-cover-media" src="${escapeHTML(shelf.cover.url)}" alt="" loading="lazy">`;
+}
 function renderShelfCard(shelf) {
   const route = `/shelves/${encodeURIComponent(shelf.id)}`;
   return `<a class="shelf-card" href="${hrefFor(route)}" data-route="${route}">
-    <span class="shelf-card-mark">${icon('bookmark', 17)}</span>
+    <span class="shelf-card-mark">${renderShelfCover(shelf, 17)}</span>
     <span class="shelf-card-copy"><span class="shelf-card-title">${escapeHTML(shelf.title)}</span>${shelf.description ? `<span class="shelf-card-description">${escapeHTML(shelf.description)}</span>` : ''}</span>
     <span class="shelf-visibility shelf-visibility-${shelf.visibility}">${shelf.visibility === 'public' ? 'Public' : 'Private'}</span>
     ${icon('arrow', 14)}
@@ -1458,8 +1581,8 @@ function renderShelfCard(shelf) {
 function renderMySpaceShelfCard(shelf) {
   const route = `/shelves/${encodeURIComponent(shelf.id)}`;
   return `<a class="my-space-shelf-card" href="${hrefFor(route)}" data-route="${route}">
-    <span class="my-space-shelf-cover" aria-hidden="true">${icon('bookmark', 25)}</span>
-    <span class="my-space-shelf-info"><span class="shelf-visibility shelf-visibility-${shelf.visibility}">${shelf.visibility === 'public' ? 'Public' : 'Private'}</span><span class="my-space-shelf-title">${escapeHTML(shelf.title)}</span>${shelf.description ? `<span class="my-space-shelf-description">${escapeHTML(shelf.description)}</span>` : ''}<span class="my-space-shelf-count">${shelf.postIds.length} ${shelf.postIds.length === 1 ? 'saved post' : 'saved posts'}</span></span>
+    <span class="my-space-shelf-cover" aria-hidden="true">${renderShelfCover(shelf, 25)}</span>
+    <span class="my-space-shelf-info"><span class="shelf-visibility shelf-visibility-${shelf.visibility}">${shelf.visibility === 'public' ? 'Public' : 'Private'}</span><span class="my-space-shelf-title">${escapeHTML(shelf.title)}</span>${shelf.description ? `<span class="my-space-shelf-description">${escapeHTML(shelf.description)}</span>` : ''}<span class="my-space-shelf-count">${shelf.savedCount ?? shelf.postIds.length} ${(shelf.savedCount ?? shelf.postIds.length) === 1 ? 'saved post' : 'saved posts'}</span></span>
     ${icon('arrow', 15)}
   </a>`;
 }
@@ -1638,8 +1761,11 @@ async function submitShelfForm(form) {
     state.pendingShelf = null;
     state.shelfReturnPostId = null;
     state.shelfReturnRoute = null;
-    navigate(`/shelves/${encodeURIComponent(shelf.id)}`);
-    if (returnPostId && state.posts.some((entry) => entry.id === returnPostId)) openShelfPicker(returnPostId, shelf.id);
+    if (returnPostId) {
+      navigate(`/post/${encodeURIComponent(returnPostId)}`, { refresh: false });
+      await refreshPublicContent();
+      if (generation === authGeneration) openShelfPicker(returnPostId, shelf.id);
+    } else navigate(`/shelves/${encodeURIComponent(shelf.id)}`);
   } catch (error) {
     if (generation !== authGeneration) return;
     state.shelfErrors = { form: error.message || 'This Shelf could not be saved. Please try again.' };
@@ -1654,13 +1780,46 @@ function openShelfPicker(postId, preselectedShelfId = null) {
   const account = activeAccount();
   const post = state.posts.find((entry) => entry.id === postId && isVisibleFanPost(entry));
   if (!account || !post || state.shelfLoading) return;
-  const ownedShelves = state.shelves.filter((shelf) => shelf.ownerId === account.id);
   state.shelfPickerPostId = post.id;
-  state.shelfPickerSelection = ownedShelves
-    .filter((shelf) => shelf.postIds.includes(post.id) || shelf.id === preselectedShelfId)
-    .map((shelf) => shelf.id);
+  state.shelfPickerScope = [];
+  state.shelfPickerSelection = [];
+  state.shelfPickerPage = 0;
+  state.shelfPickerHasMore = false;
+  state.shelfPickerBusy = false;
   state.shelfPickerError = '';
   render();
+  void loadPickerShelves(0, preselectedShelfId);
+}
+
+let pickerReadSequence = 0;
+async function loadPickerShelves(page, preselectedShelfId = null) {
+  const account = activeAccount();
+  const postId = state.shelfPickerPostId;
+  if (!account || !postId || state.shelfPickerBusy) return;
+  const generation = authGeneration;
+  const request = ++pickerReadSequence;
+  state.shelfPickerAttemptPage = page;
+  state.shelfPickerBusy = true;
+  state.shelfPickerError = '';
+  render();
+  try {
+    const data = await getShelves({ postId, page });
+    if (generation !== authGeneration || request !== pickerReadSequence || state.shelfPickerPostId !== postId) return;
+    state.shelves = [...new Map([...state.shelves, ...data.shelves].map((shelf) => [shelf.id, shelf])).values()];
+    const knownShelves = new Set(state.shelfPickerScope);
+    state.shelfPickerScope = [...new Set([...state.shelfPickerScope, ...data.shelves.map((shelf) => shelf.id)])];
+    state.shelfPickerSelection = [...new Set([...state.shelfPickerSelection,
+      ...data.shelves.filter((shelf) => !knownShelves.has(shelf.id) && (shelf.postIds.includes(postId) || shelf.id === preselectedShelfId)).map((shelf) => shelf.id)])];
+    state.shelfPickerPage = page;
+    state.shelfPickerHasMore = data.pagination.hasMore;
+  } catch (error) {
+    if (generation === authGeneration && request === pickerReadSequence && state.shelfPickerPostId === postId) state.shelfPickerError = error.message || 'Your Shelves could not be loaded.';
+  } finally {
+    if (generation === authGeneration && request === pickerReadSequence && state.shelfPickerPostId === postId) {
+      state.shelfPickerBusy = false;
+      render();
+    }
+  }
 }
 
 async function submitShelfPicker(form) {
@@ -1668,7 +1827,7 @@ async function submitShelfPicker(form) {
   const account = activeAccount();
   const postId = form.dataset.postId;
   const post = state.posts.find((entry) => entry.id === postId && isVisibleFanPost(entry));
-  if (!account || !post || state.shelfLoading) {
+  if (!account || !post || state.shelfLoading || state.shelfPickerBusy) {
     state.shelfPickerError = 'This post is no longer available to save.';
     render();
     return;
@@ -1692,13 +1851,13 @@ async function submitShelfPicker(form) {
   state.pendingShelf = { action: 'save-post', postId, ownerId: account.id, selectedIds };
   render();
   try {
-    await persistAction('shelf.setPosts', { postId, shelfIds: selectedIds });
+    await persistAction('shelf.setPosts', { postId, shelfIds: selectedIds, scopeShelfIds: state.shelfPickerScope });
     if (generation !== authGeneration) return;
     const count = selectedIds.length;
     state.shelfStatus = {
       ownerId: account.id,
       postId,
-      message: count ? `Saved to ${count} ${count === 1 ? 'Shelf' : 'Shelves'}.` : 'Removed from your Shelves.',
+      message: count ? `Saved to ${count} ${count === 1 ? 'Shelf' : 'Shelves'}.` : 'Removed from the selected Shelves.',
     };
     state.shelfPickerPostId = null;
     state.shelfPickerSelection = [];
@@ -2534,6 +2693,39 @@ function toggleComments(postId) {
     ? state.expandedCommentPostIds.filter((entry) => entry !== postId)
     : [...state.expandedCommentPostIds, postId];
   render();
+  if (state.expandedCommentPostIds.includes(postId)) {
+    void loadCommentPage(postId);
+    if (!activeAccount()) openInteractionPrompt('comment', postId);
+  }
+}
+
+let commentReadSequence = 0;
+async function loadCommentPage(postId, earlier = false) {
+  if (state.commentReaders[postId]) return;
+  const cursor = earlier ? state.commentPagination[postId]?.nextCursor : undefined;
+  if (earlier && !cursor) return;
+  const generation = authGeneration;
+  const request = ++commentReadSequence;
+  state.commentReaders[postId] = request;
+  state.commentReadErrors[postId] = '';
+  render();
+  try {
+    const data = await getComments(postId, cursor);
+    if (generation !== authGeneration || state.commentReaders[postId] !== request || !state.posts.some((post) => post.id === postId)) return;
+    const previous = earlier ? state.comments.filter((comment) => comment.postId === postId) : [];
+    const comments = [...new Map([...previous, ...data.comments].map((comment) => [comment.id, comment])).values()]
+      .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)).slice(0, 100);
+    state.comments = [...state.comments.filter((comment) => comment.postId !== postId), ...comments];
+    state.commentPagination[postId] = data.pagination;
+    state.commentWindows[postId] = earlier;
+  } catch (error) {
+    if (generation === authGeneration && state.commentReaders[postId] === request) state.commentReadErrors[postId] = error.message || 'Comments could not be loaded.';
+  } finally {
+    if (generation === authGeneration && state.commentReaders[postId] === request) {
+      delete state.commentReaders[postId];
+      render();
+    }
+  }
 }
 
 async function submitComment(form) {
@@ -2541,7 +2733,8 @@ async function submitComment(form) {
   const account = activeAccount();
   const post = state.posts.find((entry) => entry.id === form.dataset.postId && isVisibleFanPost(entry));
   const commentId = form.dataset.commentId || null;
-  if (account?.role !== 'Fan' || !post || state.commentPending) return;
+  if (!canComment(account) || !post || state.commentPending) return;
+  delete state.commentReaders[post.id];
 
   const existing = commentId
     ? state.comments.find((entry) => entry.id === commentId && entry.postId === post.id && entry.authorId === account.id)
@@ -2612,7 +2805,7 @@ async function submitComment(form) {
 function beginCommentEdit(commentId) {
   const account = activeAccount();
   const comment = state.comments.find((entry) => entry.id === commentId);
-  if (account?.role !== 'Fan' || comment?.authorId !== account.id || state.commentPending) return;
+  if (!canComment(account) || comment?.authorId !== account.id || state.commentPending) return;
   state.commentEditor = { commentId, postId: comment.postId, userId: account.id, content: comment.content };
   state.expandedCommentPostIds = [...new Set([...state.expandedCommentPostIds, comment.postId])];
   delete state.commentErrors[commentId];
@@ -2629,7 +2822,7 @@ function cancelCommentEdit() {
 function requestDeleteComment(commentId) {
   const account = activeAccount();
   const comment = state.comments.find((entry) => entry.id === commentId);
-  if (account?.role !== 'Fan' || comment?.authorId !== account.id || state.commentPending) return;
+  if (!canComment(account) || comment?.authorId !== account.id || state.commentPending) return;
   state.commentDeleteConfirmId = comment.id;
   state.expandedCommentPostIds = [...new Set([...state.expandedCommentPostIds, comment.postId])];
   render();
@@ -2639,7 +2832,8 @@ async function confirmDeleteComment(commentId) {
   const generation = authGeneration;
   const account = activeAccount();
   const comment = state.comments.find((entry) => entry.id === commentId);
-  if (account?.role !== 'Fan' || comment?.authorId !== account.id || state.commentPending || state.commentDeleteConfirmId !== commentId) return;
+  if (!canComment(account) || comment?.authorId !== account.id || state.commentPending || state.commentDeleteConfirmId !== commentId) return;
+  delete state.commentReaders[comment.postId];
   state.commentPending = { action: 'delete', userId: account.id, postId: comment.postId, commentId };
   state.commentDeleteConfirmId = null;
   state.commentStatus = null;
@@ -2706,7 +2900,7 @@ async function confirmRepost(postId) {
   state.repostStatus = null;
   render();
   try {
-    await persistAction('repost.toggle', { postId });
+    await persistAction('repost.set', { postId, active: confirmation.action !== 'undo' });
     if (generation !== authGeneration) return;
     state.repostStatus = {
       userId: account.id,
@@ -3178,6 +3372,10 @@ app?.addEventListener('submit', (event) => {
 app?.addEventListener('click', (event) => {
   const clickedElement = event.target instanceof Element ? event.target : null;
   const shelfSignupBackdrop = clickedElement?.closest('.shelf-signup-backdrop');
+  if (state.interactionPrompt && clickedElement?.classList.contains('interaction-backdrop')) {
+    closeInteractionPrompt();
+    return;
+  }
   if (shelfSignupBackdrop && clickedElement === shelfSignupBackdrop) {
     closeShelfSignupPrompt();
     return;
@@ -3204,6 +3402,38 @@ app?.addEventListener('click', (event) => {
     void refreshPublicContent();
     return;
   }
+  if (action === 'close-interaction-prompt') { closeInteractionPrompt(); return; }
+  if (action === 'interaction-auth') {
+    rememberInteraction(state.interactionPrompt);
+    state.interactionPrompt = null;
+    if (target.dataset.destination === 'login') navigate('/login');
+    else beginRegistration(target.dataset.role || 'Fan');
+    return;
+  }
+  if (['open-shelf-picker', 'toggle-repost', 'request-comment'].includes(action) && !activeAccount()) {
+    openInteractionPrompt(action === 'open-shelf-picker' ? 'shelf' : action === 'toggle-repost' ? 'repost' : 'comment', target.dataset.postId);
+    return;
+  }
+  if (action === 'earlier-comments' || action === 'retry-comments') {
+    void loadCommentPage(target.dataset.postId, action === 'earlier-comments');
+    return;
+  }
+  if (action === 'shelf-page') {
+    if (state.contentRefreshing || state.shelfLoading) return;
+    state.shelfPage = Number(target.dataset.page);
+    void refreshPublicContent();
+    return;
+  }
+  if (action === 'more-picker-shelves' || action === 'retry-picker-shelves') {
+    void loadPickerShelves(action === 'more-picker-shelves' ? state.shelfPickerPage + 1 : state.shelfPickerAttemptPage || 0);
+    return;
+  }
+  if (action === 'signin-from-shelf-signup-prompt') {
+    rememberInteraction({ kind: 'create-shelf' });
+    closeShelfSignupPrompt();
+    navigate('/login');
+    return;
+  }
   const accountRequiredActions = new Set([
     'open-shelf-picker', 'create-shelf', 'create-shelf-from-picker', 'edit-shelf',
     'delete-shelf', 'confirm-delete-shelf', 'cancel-delete-shelf', 'remove-post-from-shelf',
@@ -3227,6 +3457,7 @@ app?.addEventListener('click', (event) => {
   else if (action === 'open-shelf-signup-prompt') openShelfSignupPrompt(target.dataset.shelfPromptFocus || 'create');
   else if (action === 'close-shelf-signup-prompt') closeShelfSignupPrompt();
   else if (action === 'join-from-shelf-signup-prompt') {
+    rememberInteraction({ kind: 'create-shelf' });
     const role = target.dataset.role;
     if (role === 'Fan' || role === 'Artist') {
       state.shelfSignupPromptOpen = false;
@@ -3327,6 +3558,8 @@ app?.addEventListener('click', (event) => {
     openShelfPicker(target.dataset.postId);
   } else if (action === 'close-shelf-picker') {
     if (!state.shelfLoading) {
+      state.shelfPickerBusy = false;
+      pickerReadSequence += 1;
       state.shelfPickerPostId = null;
       state.shelfPickerSelection = [];
       state.shelfPickerError = '';
@@ -3436,6 +3669,18 @@ app?.addEventListener('click', (event) => {
 });
 
 window.addEventListener('keydown', (event) => {
+  if (state.interactionPrompt) {
+    if (event.key === 'Escape') { event.preventDefault(); closeInteractionPrompt(); return; }
+    if (event.key === 'Tab') {
+      const buttons = app.querySelector('.interaction-prompt')?.querySelectorAll('button:not(:disabled)');
+      const first = buttons?.[0], last = buttons?.[buttons.length - 1];
+      if ((event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last)
+        || !app.querySelector('.interaction-prompt')?.contains(document.activeElement)) {
+        event.preventDefault(); (event.shiftKey ? last : first)?.focus();
+      }
+    }
+    return;
+  }
   if (!state.shelfSignupPromptOpen) return;
   if (event.key === 'Escape') {
     event.preventDefault();
@@ -3458,6 +3703,7 @@ window.addEventListener('keydown', (event) => {
 
 window.addEventListener('popstate', () => {
   state.contentCursor = null;
+  state.shelfPage = 0;
   if (state.loading) cancelRegistration();
   if (state.boardLoading) cancelBoardOperation();
   if (state.shelfLoading) cancelShelfOperation();

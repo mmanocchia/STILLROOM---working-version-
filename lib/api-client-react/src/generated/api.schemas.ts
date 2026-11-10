@@ -114,6 +114,26 @@ export interface StillroomProfile {
  */
 export interface SocialRecord { [key: string]: unknown }
 
+export interface SocialPagination {
+  page?: number;
+  pageSize: number;
+  hasMore: boolean;
+  /** @nullable */
+  nextCursor?: string | null;
+}
+
+export interface CommentPage {
+  comments: SocialRecord[];
+  pagination: SocialPagination;
+}
+
+export interface ShelfPage {
+  shelves: SocialRecord[];
+  pagination: SocialPagination;
+}
+
+export type StillroomBootstrapCommentPagination = {[key: string]: SocialPagination};
+
 export type StillroomBootstrapPagination = {
   page: number;
   pageSize: number;
@@ -126,6 +146,7 @@ export type StillroomBootstrapDiscovery = {
   artistIds: string[];
   boardIds: string[];
   postIds: string[];
+  repostIds?: string[];
 };
 
 export type StillroomBootstrapFollowedArtistsByFan = {[key: string]: string[]};
@@ -133,6 +154,12 @@ export type StillroomBootstrapFollowedArtistsByFan = {[key: string]: string[]};
 export type StillroomBootstrapPostDrafts = {[key: string]: SocialRecord};
 
 export interface StillroomBootstrap {
+  commentPagination?: StillroomBootstrapCommentPagination;
+  shelfPagination?: SocialPagination;
+  interactionPostId?: string;
+  commentResult?: SocialRecord;
+  /** @nullable */
+  deletedCommentId?: string | null;
   pagination?: StillroomBootstrapPagination;
   discovery?: StillroomBootstrapDiscovery;
   /** @nullable */
@@ -167,7 +194,35 @@ export type CreateStillroomProfile201 = {
   profile: StillroomProfile;
 };
 
+export type GetStillroomCommentsParams = {
+postId: string;
+/**
+ * @maxLength 1024
+ */
+cursor?: string;
+};
+
+export type GetStillroomShelvesParams = {
+/**
+ * @maxLength 200
+ */
+ownerId?: string;
+postId?: string;
+/**
+ * @minimum 0
+ * @maximum 50000
+ */
+page?: number;
+};
+
 export type GetStillroomBootstrapParams = {
+/**
+ * @minimum 0
+ * @maximum 50000
+ */
+shelfPage?: number;
+shelfList?: GetStillroomBootstrapShelfList;
+artistList?: GetStillroomBootstrapArtistList;
 view?: GetStillroomBootstrapView;
 /**
  * @maxLength 8192
@@ -201,6 +256,20 @@ followed?: GetStillroomBootstrapFollowed;
 q?: string;
 category?: GetStillroomBootstrapCategory;
 };
+
+export type GetStillroomBootstrapShelfList = typeof GetStillroomBootstrapShelfList[keyof typeof GetStillroomBootstrapShelfList];
+
+
+export const GetStillroomBootstrapShelfList = {
+  true: 'true',
+} as const;
+
+export type GetStillroomBootstrapArtistList = typeof GetStillroomBootstrapArtistList[keyof typeof GetStillroomBootstrapArtistList];
+
+
+export const GetStillroomBootstrapArtistList = {
+  true: 'true',
+} as const;
 
 export type GetStillroomBootstrapView = typeof GetStillroomBootstrapView[keyof typeof GetStillroomBootstrapView];
 
@@ -237,6 +306,13 @@ export const GetStillroomBootstrapCategory = {
 } as const;
 
 export type RunStillroomActionParams = {
+/**
+ * @minimum 0
+ * @maximum 50000
+ */
+shelfPage?: number;
+shelfList?: RunStillroomActionShelfList;
+artistList?: RunStillroomActionArtistList;
 view?: RunStillroomActionView;
 /**
  * @maxLength 8192
@@ -270,6 +346,20 @@ followed?: RunStillroomActionFollowed;
 q?: string;
 category?: RunStillroomActionCategory;
 };
+
+export type RunStillroomActionShelfList = typeof RunStillroomActionShelfList[keyof typeof RunStillroomActionShelfList];
+
+
+export const RunStillroomActionShelfList = {
+  true: 'true',
+} as const;
+
+export type RunStillroomActionArtistList = typeof RunStillroomActionArtistList[keyof typeof RunStillroomActionArtistList];
+
+
+export const RunStillroomActionArtistList = {
+  true: 'true',
+} as const;
 
 export type RunStillroomActionView = typeof RunStillroomActionView[keyof typeof RunStillroomActionView];
 

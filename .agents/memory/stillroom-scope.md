@@ -14,3 +14,9 @@ Do not seed fictional users, artists, boards, posts, comments, reposts, or Shelv
 **Why:** These were repeated product requirements throughout Stillroom's incremental development; moving to persistence does not authorize changing them.
 
 **How to apply:** Preserve those constraints in both API authorization and the UI. Do not use seeded records to make production screens look populated.
+
+Fans and Artists may comment on public Fan posts. Only the Artist who owns the original Board receives its official-Artist comment badge. Reposting and publishing remain Fan-only.
+
+**Why:** The persistent Comments requirements explicitly allow both roles to participate while retaining the existing publishing restrictions.
+
+**How to apply:** Derive comment authorship, roles, and Board ownership from authenticated IDs and relational records, never request-body claims.

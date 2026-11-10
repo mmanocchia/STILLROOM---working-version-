@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
-import { appendPublicSnapshot, PUBLIC_WINDOW_LIMIT } from '../src/publicContent.js';
+import { appendPublicSnapshot, patchInteraction, PUBLIC_WINDOW_LIMIT } from '../src/publicContent.js';
 
 // Exercise the actual vanilla SPA handlers without starting Clerk or a server.
 const source = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8')
@@ -19,7 +19,7 @@ function harness() {
     document: { querySelector: () => node, addEventListener() {} },
     window: {
       location: { pathname: '/home' },
-      sessionStorage: { removeItem() {} },
+      sessionStorage: { removeItem() {}, getItem() { return null; }, setItem() {} },
       addEventListener() {},
       setInterval() {},
     },
@@ -34,6 +34,7 @@ function harness() {
     runAction: () => request,
     getBootstrap: () => request,
     appendPublicSnapshot,
+    patchInteraction,
     PUBLIC_WINDOW_LIMIT,
   });
   vm.runInContext(source, context);
@@ -99,7 +100,7 @@ for (const role of ['Fan', 'Artist']) {
 test('content selection follows Board, post, profile, private-follow and Shelf routes', () => {
   const h = harness();
   h.run(`state.route = '/board/board-id'; state.contentPage = 2;`);
-  assert.equal(h.run('JSON.stringify(contentSelection())'), JSON.stringify({ page: 2, boardId: 'board-id' }));
+  assert.equal(h.run('JSON.stringify(contentSelection())'), JSON.stringify({ page: 2, shelfPage: 0, boardId: 'board-id' }));
   h.run(`state.route = '/home'; state.homeTab = 'my-artists';`);
   assert.equal(h.run('contentSelection().followed'), 'true');
   h.run(`state.route = '/profile/fan'; state.profileActivityTabs.fan = 'reposts';`);
@@ -125,6 +126,47 @@ test('Feed stays newest-first and My Artists filters Boards without popularity s
   assert.equal(h.run(`homeFeedItems().map(item => item.post.id).join(',')`), 'newest,middle,oldest');
   assert.equal(h.run(`homeFeedItems(new Set(['artist'])).map(item => item.post.id).join(',')`), 'middle,oldest');
   assert.equal(h.run(`homeFeedItems(new Set()).length`), 0);
+});
+
+test('Artists can write and manage their own comments without publishing permissions', async () => {
+  const h = harness();
+  h.run(`state.activeAccountId = 'artist'; state.authUserId = 'artist';
+    state.posts = [{ id: 'post', boardId: 'board', authorId: 'fan' }];`);
+  assert.match(h.run(`renderCommentForm(state.posts[0])`), /Post comment/);
+  let sent;
+  h.context.runAction = (action, payload) => { sent = { action, payload }; return Promise.resolve({
+    userId: 'artist', profileId: 'artist', accounts: [{ id: 'artist', role: 'Artist' }],
+    posts: [{ id: 'post', boardId: 'board', authorId: 'fan' }], comments: [],
+  }); };
+  await h.run(`submitComment({ dataset: { postId: 'post' }, values: { commentContent: 'A note from the Artist.' } })`);
+  assert.equal(sent.action, 'comment.save');
+  assert.equal(sent.payload.content, 'A note from the Artist.');
+  const markup = h.run(`renderCommentItem({id:'c',postId:'post',authorId:'artist',authorUsername:'artist',
+    authorRole:'Artist',officialArtist:true,createdAt:1,content:'<script>unsafe</script>'})`);
+  assert.match(markup, /Board owner/);
+  assert.match(markup, /data-action="edit-comment"/);
+  assert.doesNotMatch(markup, /<script>unsafe/);
+});
+
+test('Undo Repost sends the captured false state after closing its confirmation', async () => {
+  const h = harness();
+  h.run(`state.posts=[{ id:'post', boardId:'board', authorId:'fan' }];
+    state.reposts=[{id:'repost',userId:'fan',postId:'post'}];
+    state.repostConfirm={postId:'post',userId:'fan',action:'undo'};`);
+  let sent;
+  h.context.runAction = (action, payload) => { sent = { action, payload }; return Promise.resolve(fanResponse); };
+  await h.run(`confirmRepost('post')`);
+  assert.equal(sent.action, 'repost.set');
+  assert.equal(sent.payload.active, false);
+});
+
+test('Repost-only Feed dependencies do not manufacture a second original Feed entry', () => {
+  const h = harness();
+  h.run(`state.posts=[{id:'old',boardId:'board',authorId:'fan',publishedAt:1}];
+    state.reposts=[{id:'recent',userId:'fan',postId:'old',repostedAt:2}];
+    state.discovery={postIds:[],repostIds:['recent'],artistIds:[],boardIds:[]};`);
+  assert.equal(h.run('homeFeedItems().length'), 1);
+  assert.equal(h.run('homeFeedItems()[0].type'), 'repost');
 });
 
 test('public view requests carry cursor context and visitors get a My Artists sign-in prompt', () => {

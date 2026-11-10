@@ -131,6 +131,8 @@ export const reposts = pgTable(
       table.postId,
     ),
     index("stillroom_reposts_user_time_idx").on(table.userId, table.repostedAt),
+    index("stillroom_reposts_time_id_idx").on(table.repostedAt, table.id),
+    index("stillroom_reposts_post_idx").on(table.postId),
   ],
 );
 
@@ -165,6 +167,7 @@ export const comments = pgTable(
   (table) => [
     index("stillroom_comments_post_time_idx").on(table.postId, table.createdAt),
     index("stillroom_comments_author_idx").on(table.authorId),
+    index("stillroom_comments_post_time_id_idx").on(table.postId, table.createdAt, table.id),
   ],
 );
 
@@ -200,6 +203,7 @@ export const shelves = pgTable(
   },
   (table) => [
     index("stillroom_shelves_owner_idx").on(table.ownerId),
+    index("stillroom_shelves_owner_time_id_idx").on(table.ownerId, table.createdAt, table.id),
     index("stillroom_shelves_visibility_idx").on(table.visibility),
   ],
 );
@@ -218,6 +222,7 @@ export const shelfPosts = pgTable(
   (table) => [
     primaryKey({ columns: [table.shelfId, table.postId] }),
     index("stillroom_shelf_posts_post_idx").on(table.postId),
+    index("stillroom_shelf_posts_shelf_time_idx").on(table.shelfId, table.addedAt, table.postId),
   ],
 );
 

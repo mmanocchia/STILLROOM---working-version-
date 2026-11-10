@@ -5,7 +5,9 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { SocialPagination } from './socialPagination';
 import type { SocialRecord } from './socialRecord';
+import type { StillroomBootstrapCommentPagination } from './stillroomBootstrapCommentPagination';
 import type { StillroomBootstrapDiscovery } from './stillroomBootstrapDiscovery';
 import type { StillroomBootstrapFollowedArtistsByFan } from './stillroomBootstrapFollowedArtistsByFan';
 import type { StillroomBootstrapPagination } from './stillroomBootstrapPagination';
@@ -13,6 +15,12 @@ import type { StillroomBootstrapPostDrafts } from './stillroomBootstrapPostDraft
 import type { StillroomProfile } from './stillroomProfile';
 
 export interface StillroomBootstrap {
+  commentPagination?: StillroomBootstrapCommentPagination;
+  shelfPagination?: SocialPagination;
+  interactionPostId?: string;
+  commentResult?: SocialRecord;
+  /** @nullable */
+  deletedCommentId?: string | null;
   pagination?: StillroomBootstrapPagination;
   discovery?: StillroomBootstrapDiscovery;
   /** @nullable */

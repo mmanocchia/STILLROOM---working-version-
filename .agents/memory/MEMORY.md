@@ -2,3 +2,4 @@
 - [Clerk test identity cleanup](clerk-test-identities.md) — Requested test-login claims are not verified provider account details; verify provenance before provider-user deletion.
 - [Async session boundaries](session-boundaries.md) — Ignore old-session success, error, and cleanup handlers; snapshot guards alone do not isolate account editors.
 - [Content page boundaries](content-page-boundaries.md) — Bounded post snapshots must preserve view context in reads and mutation responses.
+- [Correlated selection SQL](correlated-selection-sql.md) — Drizzle single-table selects can strip qualifiers inside nested SQL; test the final compiled query.

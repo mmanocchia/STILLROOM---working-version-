@@ -1,11 +1,13 @@
 import { getAuth } from "@clerk/express";
-import { and, asc, desc, eq, inArray, or, ilike, not, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, notInArray, or, ilike, not, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request } from "express";
 import { z } from "zod";
 import { changeUsernameSchema } from "../lib/profileValidation";
 import { contentPageSchema, PAGE_SIZE, pageWindow, type ContentPage } from "../lib/contentPage";
 import { readPublicDiscovery } from "../lib/publicDiscovery";
 import { discoveryScope, readDiscoveryCursor, DiscoveryCursorError } from "../lib/discoveryCursor";
+import { findPublicPost, readCommentPages, readShelfPage } from "../lib/interactionData";
+import { canComment, commentInput, repostInput, shelfSelectionInput, InteractionCursorError, parseCommentCursor } from "../lib/interactionValidation";
 import {
   artistBoards,
   comments,
@@ -77,9 +79,10 @@ async function requireOwnedMedia(assetId: string | null, ownerId: string, imageO
   return asset;
 }
 
-async function getBootstrap(userId: string | null, selection: ContentPage = { page: 0 }) {
+async function getBootstrap(userId: string | null, selection: ContentPage = contentPageSchema.parse({}), extraShelfIds: string[] = []) {
   const publicPage = selection.view ? await readPublicDiscovery(selection, userId) : null;
   const conditions = [];
+  if (selection.shelfList) conditions.push(sql`false`);
   if (selection.mine) conditions.push(userId
     ? or(eq(posts.authorId, userId), inArray(posts.boardId,
       db.select({ id: artistBoards.id }).from(artistBoards).where(eq(artistBoards.ownerId, userId))))
@@ -122,32 +125,35 @@ async function getBootstrap(userId: string | null, selection: ContentPage = { pa
           ilike(profiles.displayName, pattern))))));
   }
   const page = publicPage ? { rows: publicPage.posts, pagination: publicPage.pagination } : pageWindow(await db.select().from(posts).where(and(...conditions))
-    .orderBy(desc(posts.publishedAt), desc(posts.id))
+    .orderBy(selection.repostsBy ? desc(sql`(select max(${reposts.repostedAt}) from ${reposts}
+      where ${reposts.postId} = ${posts.id} and ${reposts.userId} = ${selection.repostsBy})`) : desc(posts.publishedAt), desc(posts.id))
     .limit(PAGE_SIZE + 1).offset(selection.page * PAGE_SIZE), selection.page);
   const postRows = page.rows;
   const postIds = postRows.map((post) => post.id);
-  const [loadedProfiles, boardRows, repostRows, commentRows, shelfRows] =
+  const [boardRows, repostRows, commentData, shelfData] =
     await Promise.all([
-      publicPage ? publicPage.profiles : db.select().from(profiles).orderBy(asc(profiles.createdAt)),
-      publicPage ? publicPage.boards : db.select().from(artistBoards).orderBy(desc(artistBoards.createdAt)),
-      postIds.length ? db.select().from(reposts).where(inArray(reposts.postId, postIds)).orderBy(asc(reposts.repostedAt)) : Promise.resolve([] as (typeof reposts.$inferSelect)[]),
-      postIds.length ? db.select().from(comments).where(inArray(comments.postId, postIds)).orderBy(asc(comments.createdAt)) : Promise.resolve([] as (typeof comments.$inferSelect)[]),
-      db
-        .select()
-        .from(shelves)
-        .where(
-          publicPage ? userId ? eq(shelves.ownerId, userId) : sql`false` : userId
-            ? or(eq(shelves.visibility, "public"), eq(shelves.ownerId, userId))
-            : eq(shelves.visibility, "public"),
-        )
-        .orderBy(desc(shelves.createdAt)),
+      publicPage ? publicPage.boards : db.select().from(artistBoards).where(or(
+        inArray(artistBoards.id, [...postRows.map((post) => post.boardId), ...(selection.boardId ? [selection.boardId] : [])]),
+        inArray(artistBoards.ownerId, [userId, selection.profileId].filter((id): id is string => Boolean(id))),
+        selection.artistList && userId ? inArray(artistBoards.ownerId,
+          db.select({ id: follows.artistId }).from(follows).where(eq(follows.fanId, userId))) : undefined,
+      )),
+      postIds.length && (userId || selection.repostsBy || selection.profileId)
+        ? db.select().from(reposts).where(and(inArray(reposts.postId, postIds),
+          inArray(reposts.userId, [userId, selection.repostsBy, selection.profileId].filter((id): id is string => Boolean(id)))))
+        : Promise.resolve([] as (typeof reposts.$inferSelect)[]),
+      readCommentPages(postIds),
+      readShelfPage(userId, selection.profileId || selection.repostsBy || userId, selection.shelfPage,
+        postIds, selection.shelfId, extraShelfIds.length ? extraShelfIds : undefined),
     ]);
-
-  const knownProfiles = new Set(loadedProfiles.map((profile) => profile.id));
-  const neededProfiles = [...new Set([...commentRows.map((comment) => comment.authorId),
-    ...repostRows.map((repost) => repost.userId)])].filter((id) => !knownProfiles.has(id));
-  const profileRows = [...loadedProfiles, ...(neededProfiles.length
-    ? await db.select().from(profiles).where(inArray(profiles.id, neededProfiles)) : [])];
+  if (selection.shelfId && !shelfData.shelves.length) throw new HttpError(404, "Shelf not found.");
+  const eventReposts = publicPage?.reposts || [];
+  const presentedReposts = [...new Map([...repostRows, ...eventReposts].map((row) => [row.id, row])).values()];
+  const neededProfiles = [...new Set([...boardRows.map((board) => board.ownerId),
+    ...postRows.map((post) => post.authorId), ...presentedReposts.map((repost) => repost.userId),
+    ...[userId, selection.profileId, selection.repostsBy].filter((id): id is string => Boolean(id))])];
+  const extraProfiles = await db.select().from(profiles).where(inArray(profiles.id, neededProfiles));
+  const profileRows = [...new Map([...(publicPage?.profiles || []), ...extraProfiles].map((row) => [row.id, row])).values()];
 
   const assetIds = [...new Set([
     ...profileRows.map((row) => row.profileImageAssetId),
@@ -163,10 +169,6 @@ async function getBootstrap(userId: string | null, selection: ContentPage = { pa
   const mediaById = new Map(mediaRows.map((asset) => [asset.id, asset]));
   const boardById = new Map(boardRows.map((board) => [board.id, board]));
   const postById = new Map(postRows.map((post) => [post.id, post]));
-  const availableShelfIds = shelfRows.map((shelf) => shelf.id);
-  const savedRows = availableShelfIds.length
-    ? await db.select().from(shelfPosts).where(inArray(shelfPosts.shelfId, availableShelfIds))
-    : [];
   const followed = userId
     ? await db.select().from(follows).where(eq(follows.fanId, userId))
     : [];
@@ -215,33 +217,13 @@ async function getBootstrap(userId: string | null, selection: ContentPage = { pa
       updatedAt: post.updatedAt.getTime(),
     };
   }).filter((post) => boardById.has(post.boardId) && accountById.has(post.authorId));
-  const presentedComments = commentRows
-    .filter((comment) => postById.has(comment.postId) && accountById.has(comment.authorId))
-    .map((comment) => ({
-      id: comment.id,
-      postId: comment.postId,
-      authorId: comment.authorId,
-      authorUsername: accountById.get(comment.authorId)?.username || "",
-      content: comment.content,
-      createdAt: comment.createdAt.getTime(),
-      updatedAt: comment.updatedAt.getTime(),
-    }));
-  const presentedShelves = shelfRows.map((shelf) => ({
-    id: shelf.id,
-    ownerId: shelf.ownerId,
-    title: shelf.title,
-    description: shelf.description,
-    visibility: shelf.visibility,
-    postIds: savedRows
-      .filter((saved) => saved.shelfId === shelf.id)
-      .sort((left, right) => left.addedAt.getTime() - right.addedAt.getTime())
-      .map((saved) => saved.postId),
-    createdAt: shelf.createdAt.getTime(),
-    updatedAt: shelf.updatedAt.getTime(),
-  }));
+  const presentedComments = commentData.comments;
+  const presentedShelves = shelfData.shelves;
 
   return {
     pagination: page.pagination,
+    commentPagination: commentData.pagination,
+    shelfPagination: shelfData.pagination,
     ...(publicPage ? { discovery: publicPage.discovery } : {}),
     userId,
     profileId: userId && accountById.has(userId) ? userId : null,
@@ -249,7 +231,7 @@ async function getBootstrap(userId: string | null, selection: ContentPage = { pa
     boards: presentedBoards,
     posts: presentedPosts,
     comments: presentedComments,
-    reposts: repostRows
+    reposts: presentedReposts
       .filter((repost) => accountById.has(repost.userId) && postById.has(repost.postId))
       .map((repost) => ({
         id: repost.id,
@@ -281,6 +263,30 @@ async function getBootstrap(userId: string | null, selection: ContentPage = { pa
   };
 }
 
+router.get("/social/comments", async (req, res): Promise<void> => {
+  const parsed = z.object({ postId: z.string().uuid(), cursor: z.string().max(1024).optional() }).safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "Choose a valid post and comment page." }); return; }
+  try {
+    parseCommentCursor(parsed.data.cursor, parsed.data.postId);
+    if (!await findPublicPost(parsed.data.postId)) { res.status(404).json({ error: "Post not found." }); return; }
+    const data = await readCommentPages([parsed.data.postId], parsed.data.cursor);
+    res.json({ comments: data.comments, pagination: data.pagination[parsed.data.postId] });
+  } catch (error) {
+    if (error instanceof InteractionCursorError) { res.status(400).json({ error: error.message }); return; }
+    throw error;
+  }
+});
+
+router.get("/social/shelves", async (req, res): Promise<void> => {
+  const parsed = z.object({ ownerId: z.string().min(1).max(200).optional(), postId: z.string().uuid().optional(),
+    page: z.coerce.number().int().min(0).max(50000).default(0) }).safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "Choose a valid Shelf page." }); return; }
+  const userId = currentUserId(req);
+  const ownerId = parsed.data.ownerId || userId;
+  if (!ownerId) { res.status(401).json({ error: "Sign in to see your Shelves." }); return; }
+  res.json(await readShelfPage(userId, ownerId, parsed.data.page, parsed.data.postId ? [parsed.data.postId] : []));
+});
+
 router.get("/social/bootstrap", async (req, res): Promise<void> => {
   const selection = contentPageSchema.safeParse(req.query);
   if (!selection.success) {
@@ -291,8 +297,8 @@ router.get("/social/bootstrap", async (req, res): Promise<void> => {
   try {
     res.json(await getBootstrap(userId, selection.data));
   } catch (error) {
-    if (error instanceof DiscoveryCursorError) {
-      res.status(400).json({ error: error.message });
+    if (error instanceof DiscoveryCursorError || error instanceof HttpError) {
+      res.status(error instanceof HttpError ? error.status : 400).json({ error: error.message });
       return;
     }
     throw error;
@@ -316,6 +322,10 @@ router.post("/social/actions", async (req, res): Promise<void> => {
     const profile = await requireProfile(userId);
     if (selection.data.view) readDiscoveryCursor(selection.data.cursor, discoveryScope(selection.data, userId));
     const payload = parsed.data.payload;
+    let interactionPostId: string | null = null;
+    let commentResultId: string | null = null;
+    let deletedCommentId: string | null = null;
+    let extraShelfIds: string[] = [];
 
     switch (parsed.data.action) {
       case "profile.update": {
@@ -437,39 +447,43 @@ router.post("/social/actions", async (req, res): Promise<void> => {
         break;
       }
       case "comment.save": {
-        await requireProfile(userId, "Fan");
-        const body = z.object({
-          commentId: z.string().uuid().nullable().default(null),
-          postId: z.string().uuid(),
-          content: z.string().trim().min(1).max(1000),
-        }).parse(payload);
-        const [post] = await db.select({ id: posts.id }).from(posts).where(eq(posts.id, body.postId)).limit(1);
+        if (!canComment(profile.role)) throw new HttpError(403, "Only Fans and Artists can comment.");
+        const body = commentInput.parse(payload);
+        const post = await findPublicPost(body.postId);
         if (!post) throw new HttpError(404, "Post not found.");
         if (body.commentId) {
           const [existing] = await db.select().from(comments).where(and(eq(comments.id, body.commentId), eq(comments.authorId, profile.id))).limit(1);
           if (!existing || existing.postId !== post.id) throw new HttpError(403, "You can only edit your own comments.");
           await db.update(comments).set({ content: body.content, updatedAt: new Date() }).where(eq(comments.id, existing.id));
+          commentResultId = existing.id;
         } else {
-          await db.insert(comments).values({ postId: post.id, authorId: profile.id, content: body.content });
+          const [created] = await db.insert(comments).values({ postId: post.id, authorId: profile.id, content: body.content }).returning({ id: comments.id });
+          commentResultId = created.id;
         }
+        interactionPostId = post.id;
         break;
       }
       case "comment.delete": {
-        await requireProfile(userId, "Fan");
+        if (!canComment(profile.role)) throw new HttpError(403, "Only Fans and Artists can comment.");
         const body = z.object({ commentId: z.string().uuid() }).parse(payload);
         const [existing] = await db.select().from(comments).where(and(eq(comments.id, body.commentId), eq(comments.authorId, profile.id))).limit(1);
         if (!existing) throw new HttpError(404, "Comment not found.");
         await db.delete(comments).where(eq(comments.id, existing.id));
+        interactionPostId = existing.postId;
+        deletedCommentId = existing.id;
         break;
       }
+      case "repost.set":
       case "repost.toggle": {
         await requireProfile(userId, "Fan");
-        const body = z.object({ postId: z.string().uuid() }).parse(payload);
-        const [post] = await db.select({ id: posts.id }).from(posts).where(eq(posts.id, body.postId)).limit(1);
+        const body = (parsed.data.action === "repost.set" ? repostInput : repostInput.partial({ active: true })).parse(payload);
+        const post = await findPublicPost(body.postId);
         if (!post) throw new HttpError(404, "Post not found.");
         const [existing] = await db.select().from(reposts).where(and(eq(reposts.userId, profile.id), eq(reposts.postId, post.id))).limit(1);
-        if (existing) await db.delete(reposts).where(eq(reposts.id, existing.id));
+        const active = body.active ?? !existing;
+        if (!active) await db.delete(reposts).where(and(eq(reposts.userId, profile.id), eq(reposts.postId, post.id)));
         else await db.insert(reposts).values({ userId: profile.id, postId: post.id }).onConflictDoNothing();
+        interactionPostId = post.id;
         break;
       }
       case "shelf.save": {
@@ -490,7 +504,8 @@ router.post("/social/actions", async (req, res): Promise<void> => {
       }
       case "shelf.delete": {
         const body = z.object({ shelfId: z.string().uuid() }).parse(payload);
-        await db.delete(shelves).where(and(eq(shelves.id, body.shelfId), eq(shelves.ownerId, profile.id)));
+        const deleted = await db.delete(shelves).where(and(eq(shelves.id, body.shelfId), eq(shelves.ownerId, profile.id))).returning({ id: shelves.id });
+        if (!deleted.length) throw new HttpError(404, "Shelf not found.");
         break;
       }
       case "shelf.addPost":
@@ -498,27 +513,25 @@ router.post("/social/actions", async (req, res): Promise<void> => {
         const body = z.object({ shelfId: z.string().uuid(), postId: z.string().uuid() }).parse(payload);
         const [shelf] = await db.select().from(shelves).where(and(eq(shelves.id, body.shelfId), eq(shelves.ownerId, profile.id))).limit(1);
         if (!shelf) throw new HttpError(404, "Shelf not found.");
-        const [post] = await db.select({ id: posts.id }).from(posts).where(eq(posts.id, body.postId)).limit(1);
+        const post = await findPublicPost(body.postId);
         if (!post) throw new HttpError(404, "Post not found.");
         if (parsed.data.action === "shelf.addPost") {
           await db.insert(shelfPosts).values({ shelfId: shelf.id, postId: post.id }).onConflictDoNothing();
         } else {
           await db.delete(shelfPosts).where(and(eq(shelfPosts.shelfId, shelf.id), eq(shelfPosts.postId, post.id)));
         }
+        interactionPostId = post.id;
+        extraShelfIds = [shelf.id];
         break;
       }
       case "shelf.setPosts": {
-        const body = z.object({
-          postId: z.string().uuid(),
-          shelfIds: z.array(z.string().uuid()).max(100),
-        }).parse(payload);
-        const [post] = await db.select({ id: posts.id })
-          .from(posts).where(eq(posts.id, body.postId)).limit(1);
+        const body = shelfSelectionInput.parse(payload);
+        const post = await findPublicPost(body.postId);
         if (!post) throw new HttpError(404, "Post not found.");
         const ownedShelves = await db.select({ id: shelves.id })
-          .from(shelves).where(eq(shelves.ownerId, profile.id));
+          .from(shelves).where(and(eq(shelves.ownerId, profile.id), inArray(shelves.id, body.scopeShelfIds)));
         const ownedIds = ownedShelves.map((shelf) => shelf.id);
-        if (body.shelfIds.some((id) => !ownedIds.includes(id))) {
+        if (body.scopeShelfIds.some((id) => !ownedIds.includes(id))) {
           throw new HttpError(403, "You can only save posts to your own Shelves.");
         }
         await db.transaction(async (tx) => {
@@ -526,6 +539,7 @@ router.post("/social/actions", async (req, res): Promise<void> => {
             await tx.delete(shelfPosts).where(and(
               inArray(shelfPosts.shelfId, ownedIds),
               eq(shelfPosts.postId, body.postId),
+              body.shelfIds.length ? notInArray(shelfPosts.shelfId, body.shelfIds) : undefined,
             ));
           }
           if (body.shelfIds.length) {
@@ -534,13 +548,21 @@ router.post("/social/actions", async (req, res): Promise<void> => {
             ).onConflictDoNothing();
           }
         });
+        interactionPostId = post.id;
+        extraShelfIds = ownedIds;
         break;
       }
       default:
         throw new HttpError(400, "Unsupported action.");
     }
 
-    res.json(await getBootstrap(userId, selection.data));
+    const responseSelection = interactionPostId ? contentPageSchema.parse({ postId: interactionPostId })
+      : parsed.data.action === "shelf.delete"
+      ? { ...selection.data, shelfId: undefined, shelfList: "true" as const } : selection.data;
+    const data = await getBootstrap(userId, responseSelection, extraShelfIds);
+    const commentResult = commentResultId && interactionPostId
+      ? (await readCommentPages([interactionPostId], undefined, commentResultId)).comments[0] : undefined;
+    res.json({ ...data, ...(interactionPostId ? { interactionPostId, commentResult, deletedCommentId } : {}) });
   } catch (error) {
     if (error instanceof DiscoveryCursorError) {
       res.status(400).json({ error: error.message });
@@ -558,6 +580,10 @@ router.post("/social/actions", async (req, res): Promise<void> => {
     const code = dbError?.code || dbError?.cause?.code || "";
     if (code === "23505") {
       res.status(409).json({ error: "That item already exists." });
+      return;
+    }
+    if (code === "23503") {
+      res.status(409).json({ error: "That post or Shelf is no longer available. Refresh and try again." });
       return;
     }
     req.log.error({ err: error }, "Stillroom data action failed");
