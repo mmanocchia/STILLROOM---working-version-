@@ -9,6 +9,15 @@ export class ApiError extends Error {
   }
 }
 
+function httpErrorMessage(status) {
+  if (status >= 500) return `Stillroom’s server could not complete this request (HTTP ${status}). Please try again.`;
+  if (status === 401) return 'Please sign in again to continue (HTTP 401).';
+  if (status === 403) return 'You do not have permission to complete this request (HTTP 403).';
+  if (status === 404) return 'The requested Stillroom resource was not found (HTTP 404).';
+  if (status === 429) return 'Too many requests. Please wait a moment and try again (HTTP 429).';
+  return `That request could not be completed (HTTP ${status}). Please try again.`;
+}
+
 export async function apiRequest(path, options = {}) {
   const headers = new Headers(options.headers || {});
   const request = { ...options, credentials: 'include', headers };
@@ -19,12 +28,28 @@ export async function apiRequest(path, options = {}) {
   let response;
   try {
     response = await fetch(`${apiRoot}${path}`, request);
-  } catch {
-    throw new ApiError('Could not reach Stillroom. Check your connection and try again.');
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new ApiError('The request was cancelled. Please try again.');
+    throw new ApiError('No response was received from Stillroom. The connection may have been interrupted. Please try again.');
   }
-  const data = response.status === 204 ? null : await response.json().catch(() => null);
+  let data = null;
+  if (response.status !== 204) {
+    try {
+      data = await response.json();
+    } catch {
+      // A proxy can return an HTML error page. Preserve its HTTP status instead
+      // of treating it as a network failure or accepting null as valid content.
+      throw new ApiError(response.ok
+        ? 'Stillroom returned an unreadable response. Please try again.'
+        : httpErrorMessage(response.status), response.status);
+    }
+  }
   if (!response.ok) {
-    throw new ApiError(data?.error || 'That request could not be completed.', response.status);
+    throw new ApiError(typeof data?.error === 'string' && data.error.trim()
+      ? data.error : httpErrorMessage(response.status), response.status);
+  }
+  if (response.status !== 204 && (!data || typeof data !== 'object')) {
+    throw new ApiError('Stillroom returned an unreadable response. Please try again.', response.status);
   }
   return data;
 }

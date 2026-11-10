@@ -349,6 +349,31 @@ test('auth reset releases account-specific pending flags and private editor stat
   assert.equal(h.run('state.shelves[0].visibility'), 'public');
 });
 
+test('a successful session reload clears an obsolete public refresh error', async () => {
+  const h = harness('/explore');
+  h.run(`state.contentRefreshError = 'Could not reach Stillroom. Check your connection and try again.';`);
+  const pending = h.run('syncSession()');
+  h.resolve({ userId: 'fan', profileId: 'fan', accounts: [], boards: [], posts: [] });
+  await pending;
+  assert.equal(h.run('state.contentRefreshError'), '');
+});
+
+test('failed public refresh preserves existing posts, boards and profiles', async () => {
+  const h = harness('/explore');
+  h.run(`
+    clerk = { loaded: true };
+    state.posts = [{ id: 'existing', boardId: 'board', authorId: 'fan' }];
+    renderPublicContent = () => {};
+  `);
+  const pending = h.run('refreshPublicContent()');
+  h.reject(Object.assign(new Error('Stillroom’s server could not complete this request (HTTP 500).'), { status: 500 }));
+  await pending;
+  assert.equal(h.run('state.posts[0].id'), 'existing');
+  assert.equal(h.run('state.boards[0].id'), 'board');
+  assert.equal(h.run('state.accounts.length'), 2);
+  assert.match(h.run('state.contentRefreshError'), /HTTP 500/);
+});
+
 test('session change removes private DOM immediately while the old bootstrap is pending', () => {
   const h = harness();
   h.run(`

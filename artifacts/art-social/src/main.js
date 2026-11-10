@@ -397,6 +397,7 @@ async function syncSession() {
       const data = await getBootstrap(selection);
       if (generation !== authGeneration) return;
       applyBootstrap(data);
+      state.contentRefreshError = '';
       selectionChanged = JSON.stringify(selection) !== JSON.stringify(contentSelection());
       state.authLoading = false;
       if (data.userId && !data.profileId) {
