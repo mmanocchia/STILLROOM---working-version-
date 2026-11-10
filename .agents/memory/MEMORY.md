@@ -5,3 +5,4 @@
 - [Correlated selection SQL](correlated-selection-sql.md) — Drizzle single-table selects can strip qualifiers inside nested SQL; test the final compiled query.
 - [Schema tooling pitfalls](schema-tooling-pitfalls.md) — Composite-FK prerequisites and Orval path/query naming collisions need explicit handling.
 - [Account security lifecycle](account-security-lifecycle.md) — Artist deletion consent, durable cleanup, residual JWT blocking and honest reverification testing.
+- [Stillroom visual identity](visual-identity.md) — White-dominant, restrained dusty pink; artistic and gender-neutral, without tinting uploaded media.

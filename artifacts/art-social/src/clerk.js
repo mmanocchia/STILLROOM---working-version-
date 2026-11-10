@@ -45,11 +45,11 @@ export async function loadClerk() {
 
 export const clerkAppearance = {
   variables: {
-    colorPrimary: '#159A95',
-    colorForeground: '#172E32',
+    colorPrimary: '#A8456A',
+    colorForeground: '#29252A',
     colorBackground: '#FFFFFF',
     colorInput: '#FFFFFF',
-    colorInputForeground: '#172E32',
+    colorInputForeground: '#29252A',
     borderRadius: '10px',
     fontFamily: 'Inter, sans-serif',
   },
