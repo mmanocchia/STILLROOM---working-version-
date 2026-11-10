@@ -668,6 +668,7 @@ function renderRegistration() {
         ${role
           ? `<p class="form-note">You’re joining as a ${escapeHTML(role)}. After confirming your sign-in details, you’ll set your name and username.</p><div id="clerk-sign-up" class="clerk-auth-container" aria-live="polite"><p class="field-hint">Loading secure sign-up…</p></div>`
           : `<p class="form-note">Choose an account type to continue. Sign-up uses secure Clerk authentication.</p>`}
+        <p class="auth-alternative">Already have an account? <a href="${hrefFor('/login')}" data-route="/login" data-testid="registration-sign-in">Sign In</a></p>
       </section>
     </main>
   </div>`;
@@ -687,6 +688,7 @@ function renderLogin() {
         ${renderAuthNotice()}
         ${state.dataError ? `<p class="inline-error" role="alert">${escapeHTML(state.dataError)}</p>` : ''}
         <div id="clerk-sign-in" class="clerk-auth-container" aria-live="polite"><p class="field-hint">Loading secure sign-in…</p></div>
+        <p class="auth-alternative">Don't have an account? <a href="${hrefFor('/register')}" data-route="/register" data-testid="login-sign-up">Sign Up</a></p>
       </section>
     </main>
   </div>`;
@@ -758,7 +760,7 @@ function renderShell(content, pageTitle) {
   const accountControls = account
     ? `<a class="icon-button profile-shortcut" href="${hrefFor('/profile')}" data-route="/profile" aria-label="Open profile">${icon('profile', 17)}<span class="account-handle">@${escapeHTML(account.username)}</span></a><button class="logout-button" type="button" data-action="logout" aria-label="Log out" ${state.authActionLoading ? 'disabled' : ''}>${icon('logout', 15)}<span>${state.authActionLoading ? 'Signing out…' : 'Log out'}</span></button>`
     : `<div class="visitor-join-actions" aria-label="Join Stillroom">
-        <a class="text-button signin-nav-button" href="${hrefFor('/login')}" data-route="/login">Sign in</a>
+        <a class="outline-button join-nav-button signin-nav-button" href="${hrefFor('/login')}" data-route="/login" data-testid="navigation-sign-in">Sign In</a>
         <button class="primary-button join-nav-button" type="button" data-action="join" data-role="Fan">Join as a Fan</button>
         <button class="outline-button join-nav-button join-nav-artist-button" type="button" data-action="join" data-role="Artist">Join as an Artist</button>
       </div>`;

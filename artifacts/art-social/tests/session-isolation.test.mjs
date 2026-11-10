@@ -30,6 +30,7 @@ function harness() {
     clearTimeout,
     clerk: null,
     runAction: () => request,
+    getBootstrap: () => request,
   });
   vm.runInContext(source, context);
   vm.runInContext(`
@@ -53,6 +54,42 @@ function harness() {
     run: (code) => vm.runInContext(code, context),
     snapshot: () => vm.runInContext('JSON.stringify(state)', context),
   };
+}
+
+test('guest navigation and both registration roles expose direct Sign In links', () => {
+  const h = harness();
+  h.run('state.activeAccountId = null; state.authUserId = null;');
+  assert.match(h.run(`renderShell('', 'Feed')`), /data-testid="navigation-sign-in">Sign In<\/a>/);
+  for (const role of ['Fan', 'Artist']) {
+    h.run(`state.pendingRole = '${role}';`);
+    const html = h.run('renderRegistration()');
+    assert.match(html, /Already have an account\?/);
+    assert.match(html, /href="\/login" data-route="\/login"/);
+  }
+  assert.match(h.run('renderLogin()'), /Don't have an account\?/);
+  assert.match(h.run('renderLogin()'), /data-testid="login-sign-up">Sign Up<\/a>/);
+});
+
+for (const role of ['Fan', 'Artist']) {
+  test(`existing ${role} session restores its profile on login and refresh without onboarding`, async () => {
+    const h = harness();
+    h.run(`state.route = '/login'; state.activeAccountId = null; state.authUserId = null;`);
+    const pending = h.run('syncSession()');
+    h.resolve({
+      userId: 'existing', profileId: 'existing',
+      accounts: [{ id: 'existing', role, name: 'Existing member', username: 'existing' }],
+      boards: [], posts: [], shelves: [],
+    });
+    await pending;
+    assert.equal(h.run('state.route'), '/home');
+    assert.equal(h.run('activeAccount().id'), 'existing');
+    assert.equal(h.run('activeAccount().role'), role);
+    assert.doesNotMatch(h.run(`renderShell('', 'Feed')`), /data-testid="navigation-sign-in"/);
+    assert.match(h.run(`renderShell('', 'Feed')`), /data-action="logout"/);
+    await h.run('syncSession()');
+    assert.equal(h.run('state.accounts.length'), 1);
+    assert.equal(h.run('activeAccount().id'), 'existing');
+  });
 }
 
 const fanResponse = {

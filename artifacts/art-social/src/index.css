@@ -2183,8 +2183,17 @@ body:has(.shelf-signup-backdrop) { overflow: hidden; }
 .app-data-error { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 14px 18px; margin-bottom: 20px; border: 1px solid #efc5c5; border-radius: 12px; background: #fff8f8; color: #813a3a; }
 .form-error { color: #9d3535; font-size: 13px; line-height: 1.6; margin: 12px 0; }
 .signin-nav-button { white-space: nowrap; }
+.app-topnav .join-nav-button.signin-nav-button { background: #fff; color: var(--teal); border-color: var(--teal); }
+.app-topnav .join-nav-button.signin-nav-button:hover { background: var(--ice-aqua); color: var(--charcoal); }
+.auth-alternative { margin: 20px 0 0; color: var(--muted); font: 13px/1.6 Inter, sans-serif; }
+.auth-alternative a { color: var(--teal); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.auth-alternative a:hover { color: var(--charcoal); }
+.auth-alternative a:focus-visible, .signin-nav-button:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
 @media (max-width: 640px) {
   .visitor-join-actions { flex-wrap: wrap; justify-content: flex-end; }
-  .signin-nav-button { font-size: 11px; padding: 4px; }
+  .app-topnav .visitor-join-actions .join-nav-button { min-height: 34px; padding: 0 7px; font-size: 10px; }
   .clerk-auth-container { overflow: hidden; }
+}
+@media (max-width: 360px) {
+  .app-topnav .visitor-join-actions .join-nav-button { padding: 0 5px; font-size: 8.5px; }
 }
