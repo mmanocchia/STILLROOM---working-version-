@@ -5,6 +5,138 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export type CurationCommandAction = typeof CurationCommandAction[keyof typeof CurationCommandAction];
+
+
+export const CurationCommandAction = {
+  featureset: 'feature.set',
+  featuremove: 'feature.move',
+  collectionsave: 'collection.save',
+  collectiondelete: 'collection.delete',
+  collectionmove: 'collection.move',
+  collectionpost: 'collection.post',
+} as const;
+
+export type CurationCommandPayload = { [key: string]: unknown };
+
+export interface CurationCommand {
+  action: CurationCommandAction;
+  payload: CurationCommandPayload;
+}
+
+export type ArtistCollectionCoverType = typeof ArtistCollectionCoverType[keyof typeof ArtistCollectionCoverType];
+
+
+export const ArtistCollectionCoverType = {
+  image: 'image',
+  video: 'video',
+} as const;
+
+export type ArtistCollectionCover = {
+  url: string;
+  type: ArtistCollectionCoverType;
+} | null;
+
+export interface ArtistCollection {
+  id: string;
+  boardId: string;
+  title: string;
+  description: string;
+  position: number;
+  postCount: number;
+  cover: ArtistCollectionCover;
+}
+
+export interface SocialPagination {
+  page?: number;
+  pageSize: number;
+  hasMore: boolean;
+  /** @nullable */
+  nextCursor?: string | null;
+}
+
+/**
+ * Existing vanilla SPA record shape, containing IDs and display fields but no credentials or storage object paths.
+ */
+export interface SocialRecord { [key: string]: unknown }
+
+export type StillroomProfileRole = typeof StillroomProfileRole[keyof typeof StillroomProfileRole];
+
+
+export const StillroomProfileRole = {
+  Fan: 'Fan',
+  Artist: 'Artist',
+} as const;
+
+export interface StillroomProfile {
+  id: string;
+  role: StillroomProfileRole;
+  name: string;
+  username: string;
+  biography: string;
+  interests: string;
+  profileImage: string;
+  /** @nullable */
+  profileImageAssetId?: string | null;
+  createdAt: number;
+}
+
+export type StillroomBootstrapCommentPagination = {[key: string]: SocialPagination};
+
+export type StillroomBootstrapPagination = {
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+  /** @nullable */
+  nextCursor?: string | null;
+};
+
+export type StillroomBootstrapDiscovery = {
+  artistIds: string[];
+  boardIds: string[];
+  postIds: string[];
+  repostIds?: string[];
+};
+
+export type StillroomBootstrapFollowedArtistsByFan = {[key: string]: string[]};
+
+export type StillroomBootstrapPostDrafts = {[key: string]: SocialRecord};
+
+export interface StillroomBootstrap {
+  commentPagination?: StillroomBootstrapCommentPagination;
+  shelfPagination?: SocialPagination;
+  interactionPostId?: string;
+  commentResult?: SocialRecord;
+  /** @nullable */
+  deletedCommentId?: string | null;
+  pagination?: StillroomBootstrapPagination;
+  discovery?: StillroomBootstrapDiscovery;
+  /** @nullable */
+  userId: string | null;
+  /** @nullable */
+  profileId: string | null;
+  accounts: StillroomProfile[];
+  boards: SocialRecord[];
+  posts: SocialRecord[];
+  comments: SocialRecord[];
+  reposts: SocialRecord[];
+  shelves: SocialRecord[];
+  followedArtistsByFan: StillroomBootstrapFollowedArtistsByFan;
+  postDrafts: StillroomBootstrapPostDrafts;
+}
+
+export interface BoardCuration {
+  boardId: string;
+  /** @maxItems 5 */
+  featuredPostIds: string[];
+  collections: ArtistCollection[];
+  collectionPagination: SocialPagination;
+  selectedCollection: ArtistCollection | null;
+  collectionPostIds: string[];
+  postPagination: SocialPagination;
+  snapshot: StillroomBootstrap;
+}
+
 export type ProfileOnboardingInputRole = typeof ProfileOnboardingInputRole[keyof typeof ProfileOnboardingInputRole];
 
 
@@ -88,40 +220,6 @@ export interface UploadCompleteInput {
   assetId: string;
 }
 
-export type StillroomProfileRole = typeof StillroomProfileRole[keyof typeof StillroomProfileRole];
-
-
-export const StillroomProfileRole = {
-  Fan: 'Fan',
-  Artist: 'Artist',
-} as const;
-
-export interface StillroomProfile {
-  id: string;
-  role: StillroomProfileRole;
-  name: string;
-  username: string;
-  biography: string;
-  interests: string;
-  profileImage: string;
-  /** @nullable */
-  profileImageAssetId?: string | null;
-  createdAt: number;
-}
-
-/**
- * Existing vanilla SPA record shape, containing IDs and display fields but no credentials or storage object paths.
- */
-export interface SocialRecord { [key: string]: unknown }
-
-export interface SocialPagination {
-  page?: number;
-  pageSize: number;
-  hasMore: boolean;
-  /** @nullable */
-  nextCursor?: string | null;
-}
-
 export interface CommentPage {
   comments: SocialRecord[];
   pagination: SocialPagination;
@@ -132,56 +230,30 @@ export interface ShelfPage {
   pagination: SocialPagination;
 }
 
-export type StillroomBootstrapCommentPagination = {[key: string]: SocialPagination};
-
-export type StillroomBootstrapPagination = {
-  page: number;
-  pageSize: number;
-  hasMore: boolean;
-  /** @nullable */
-  nextCursor?: string | null;
-};
-
-export type StillroomBootstrapDiscovery = {
-  artistIds: string[];
-  boardIds: string[];
-  postIds: string[];
-  repostIds?: string[];
-};
-
-export type StillroomBootstrapFollowedArtistsByFan = {[key: string]: string[]};
-
-export type StillroomBootstrapPostDrafts = {[key: string]: SocialRecord};
-
-export interface StillroomBootstrap {
-  commentPagination?: StillroomBootstrapCommentPagination;
-  shelfPagination?: SocialPagination;
-  interactionPostId?: string;
-  commentResult?: SocialRecord;
-  /** @nullable */
-  deletedCommentId?: string | null;
-  pagination?: StillroomBootstrapPagination;
-  discovery?: StillroomBootstrapDiscovery;
-  /** @nullable */
-  userId: string | null;
-  /** @nullable */
-  profileId: string | null;
-  accounts: StillroomProfile[];
-  boards: SocialRecord[];
-  posts: SocialRecord[];
-  comments: SocialRecord[];
-  reposts: SocialRecord[];
-  shelves: SocialRecord[];
-  followedArtistsByFan: StillroomBootstrapFollowedArtistsByFan;
-  postDrafts: StillroomBootstrapPostDrafts;
-}
-
 export interface HealthStatus {
   status: string;
 }
 
 export type ApiFailureResponse = {
   error: string;
+};
+
+export type GetBoardCurationParams = {
+collectionId?: string;
+/**
+ * @minimum 0
+ * @maximum 50000
+ */
+page?: number;
+/**
+ * @minimum 0
+ * @maximum 50000
+ */
+collectionPage?: number;
+};
+
+export type ManageBoardCuration200 = {
+  ok: boolean;
 };
 
 export type GetCurrentUser200 = {

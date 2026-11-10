@@ -79,9 +79,11 @@ async function requireOwnedMedia(assetId: string | null, ownerId: string, imageO
   return asset;
 }
 
-async function getBootstrap(userId: string | null, selection: ContentPage = contentPageSchema.parse({}), extraShelfIds: string[] = []) {
+export async function getBootstrap(userId: string | null, selection: ContentPage = contentPageSchema.parse({}), extraShelfIds: string[] = [], curatedPostIds?: string[]) {
   const publicPage = selection.view ? await readPublicDiscovery(selection, userId) : null;
   const conditions = [];
+  // Internal-only bounded dependency read; never accepted from the public query.
+  if (curatedPostIds) conditions.push(inArray(posts.id, curatedPostIds.slice(0, 25)));
   if (selection.shelfList) conditions.push(sql`false`);
   if (selection.mine) conditions.push(userId
     ? or(eq(posts.authorId, userId), inArray(posts.boardId,
@@ -124,10 +126,13 @@ async function getBootstrap(userId: string | null, selection: ContentPage = cont
           ilike(artistBoards.discipline, pattern), ilike(profiles.username, pattern),
           ilike(profiles.displayName, pattern))))));
   }
-  const page = publicPage ? { rows: publicPage.posts, pagination: publicPage.pagination } : pageWindow(await db.select().from(posts).where(and(...conditions))
+  const rawPosts = publicPage ? publicPage.posts : await db.select().from(posts).where(and(...conditions))
     .orderBy(selection.repostsBy ? desc(sql`(select max(${reposts.repostedAt}) from ${reposts}
       where ${reposts.postId} = ${posts.id} and ${reposts.userId} = ${selection.repostsBy})`) : desc(posts.publishedAt), desc(posts.id))
-    .limit(PAGE_SIZE + 1).offset(selection.page * PAGE_SIZE), selection.page);
+    .limit(curatedPostIds ? 25 : PAGE_SIZE + 1).offset(selection.page * PAGE_SIZE);
+  const page = publicPage ? { rows: rawPosts, pagination: publicPage.pagination }
+    : curatedPostIds ? { rows: rawPosts, pagination: { page: 0, pageSize: 25, hasMore: false } }
+      : pageWindow(rawPosts, selection.page);
   const postRows = page.rows;
   const postIds = postRows.map((post) => post.id);
   const [boardRows, repostRows, commentData, shelfData] =
@@ -158,6 +163,7 @@ async function getBootstrap(userId: string | null, selection: ContentPage = cont
   const assetIds = [...new Set([
     ...profileRows.map((row) => row.profileImageAssetId),
     ...boardRows.map((row) => row.profileImageAssetId),
+    ...boardRows.map((row) => row.coverImageAssetId),
     ...postRows.map((row) => row.mediaAssetId),
   ].filter((id): id is string => Boolean(id)))];
   const mediaRows = await db.select().from(mediaAssets).where(and(eq(mediaAssets.status, "ready"),
@@ -199,6 +205,9 @@ async function getBootstrap(userId: string | null, selection: ContentPage = cont
       ? mediaUrl(board.profileImageAssetId)
       : "",
     profileImageAssetId: board.profileImageAssetId,
+    coverImageAssetId: board.coverImageAssetId,
+    coverImage: mediaById.has(board.coverImageAssetId || "") ? mediaUrl(board.coverImageAssetId) : "",
+    creativeDescription: board.creativeDescription,
     createdAt: board.createdAt.getTime(),
     updatedAt: board.updatedAt.getTime(),
   }));
@@ -360,8 +369,11 @@ router.post("/social/actions", async (req, res): Promise<void> => {
           discipline: z.string().trim().min(1).max(80),
           biography: z.string().trim().min(1).max(2000),
           profileImageAssetId: z.string().uuid().nullable().default(null),
+          coverImageAssetId: z.string().uuid().nullable().optional(),
+          creativeDescription: z.string().trim().max(240).optional(),
         }).parse(payload);
         await requireOwnedMedia(body.profileImageAssetId, profile.id, true);
+        await requireOwnedMedia(body.coverImageAssetId || null, profile.id, true);
         const [existing] = await db.select().from(artistBoards).where(eq(artistBoards.ownerId, profile.id)).limit(1);
         if (existing) {
           await db.update(artistBoards).set({
@@ -369,6 +381,8 @@ router.post("/social/actions", async (req, res): Promise<void> => {
             discipline: body.discipline,
             biography: body.biography,
             profileImageAssetId: body.profileImageAssetId,
+            ...(body.coverImageAssetId !== undefined ? { coverImageAssetId: body.coverImageAssetId } : {}),
+            ...(body.creativeDescription !== undefined ? { creativeDescription: body.creativeDescription } : {}),
             updatedAt: new Date(),
           }).where(eq(artistBoards.id, existing.id));
         } else {

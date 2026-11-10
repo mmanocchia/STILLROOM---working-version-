@@ -48,6 +48,8 @@ export const artistBoards = pgTable(
     discipline: text("discipline").notNull(),
     biography: text("biography").notNull(),
     profileImageAssetId: uuid("profile_image_asset_id"),
+    coverImageAssetId: uuid("cover_image_asset_id").references(() => mediaAssets.id, { onDelete: "set null" }),
+    creativeDescription: text("creative_description").notNull().default(""),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -97,6 +99,7 @@ export const posts = pgTable(
     updatedAt: updatedAt(),
   },
   (table) => [
+    uniqueIndex("stillroom_posts_board_id_unique").on(table.boardId, table.id),
     index("stillroom_posts_board_published_idx").on(
       table.boardId,
       table.publishedAt,

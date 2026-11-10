@@ -3,3 +3,4 @@
 - [Async session boundaries](session-boundaries.md) — Ignore old-session success, error, and cleanup handlers; snapshot guards alone do not isolate account editors.
 - [Content page boundaries](content-page-boundaries.md) — Bounded post snapshots must preserve view context in reads and mutation responses.
 - [Correlated selection SQL](correlated-selection-sql.md) — Drizzle single-table selects can strip qualifiers inside nested SQL; test the final compiled query.
+- [Schema tooling pitfalls](schema-tooling-pitfalls.md) — Composite-FK prerequisites and Orval path/query naming collisions need explicit handling.

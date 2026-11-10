@@ -11,6 +11,47 @@ tags:
   - name: health
     description: Health operations
 paths:
+  /social/boards/{boardId}/curation:
+    parameters:
+      - { in: path, name: boardId, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getBoardCuration
+      summary: Public featured Fan posts and paginated Artist Collections
+      parameters:
+        - { in: query, name: collectionId, schema: { type: string, format: uuid } }
+        - { in: query, name: page, schema: { type: integer, minimum: 0, maximum: 50000, default: 0 } }
+        - { in: query, name: collectionPage, schema: { type: integer, minimum: 0, maximum: 50000, default: 0 } }
+      responses:
+        "200":
+          description: Board curation and original post dependencies
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BoardCuration" }
+        "400": { $ref: "#/components/responses/ApiFailure" }
+        "404": { $ref: "#/components/responses/ApiFailure" }
+    post:
+      operationId: manageBoardCuration
+      summary: Board-owner-only curation commands
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CurationCommand" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+        "400": { $ref: "#/components/responses/ApiFailure" }
+        "401": { $ref: "#/components/responses/ApiFailure" }
+        "403": { $ref: "#/components/responses/ApiFailure" }
+        "404": { $ref: "#/components/responses/ApiFailure" }
+        "409": { $ref: "#/components/responses/ApiFailure" }
   /auth/user:
     get:
       operationId: getCurrentUser
@@ -228,6 +269,48 @@ components:
             properties:
               error: { type: string }
   schemas:
+    CurationCommand:
+      type: object
+      additionalProperties: false
+      required: [action, payload]
+      properties:
+        action:
+          type: string
+          enum: [feature.set, feature.move, collection.save, collection.delete, collection.move, collection.post]
+        payload: { type: object, additionalProperties: true }
+    ArtistCollection:
+      type: object
+      required: [id, boardId, title, description, position, postCount, cover]
+      properties:
+        id: { type: string, format: uuid }
+        boardId: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string }
+        position: { type: integer }
+        postCount: { type: integer }
+        cover:
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [url, type]
+              properties:
+                url: { type: string }
+                type: { type: string, enum: [image, video] }
+    BoardCuration:
+      type: object
+      required: [boardId, featuredPostIds, collections, collectionPagination, selectedCollection, collectionPostIds, postPagination, snapshot]
+      properties:
+        boardId: { type: string, format: uuid }
+        featuredPostIds: { type: array, maxItems: 5, items: { type: string, format: uuid } }
+        collections: { type: array, items: { $ref: "#/components/schemas/ArtistCollection" } }
+        collectionPagination: { $ref: "#/components/schemas/SocialPagination" }
+        selectedCollection:
+          oneOf:
+            - { $ref: "#/components/schemas/ArtistCollection" }
+            - type: "null"
+        collectionPostIds: { type: array, items: { type: string, format: uuid } }
+        postPagination: { $ref: "#/components/schemas/SocialPagination" }
+        snapshot: { $ref: "#/components/schemas/StillroomBootstrap" }
     ProfileOnboardingInput:
       type: object
       required: [role, name, username]

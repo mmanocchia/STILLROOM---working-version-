@@ -1,5 +1,5 @@
 import { getAuth } from "@clerk/express";
-import { and, eq } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 import { Router } from "express";
 import type { Request } from "express";
 import { Readable } from "stream";
@@ -141,7 +141,7 @@ router.get("/media/:assetId", async (req, res): Promise<void> => {
     db.select({ id: profiles.id }).from(profiles)
       .where(eq(profiles.profileImageAssetId, asset.id)).limit(1),
     db.select({ id: artistBoards.id }).from(artistBoards)
-      .where(eq(artistBoards.profileImageAssetId, asset.id)).limit(1),
+      .where(or(eq(artistBoards.profileImageAssetId, asset.id), eq(artistBoards.coverImageAssetId, asset.id))).limit(1),
     db.select({ id: posts.id }).from(posts)
       .where(eq(posts.mediaAssetId, asset.id)).limit(1),
   ]);

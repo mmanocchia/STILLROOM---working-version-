@@ -5,7 +5,9 @@ import vm from 'node:vm';
 import { appendPublicSnapshot, patchInteraction, PUBLIC_WINDOW_LIMIT } from '../src/publicContent.js';
 
 // Exercise the actual vanilla SPA handlers without starting Clerk or a server.
-const source = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8')
+const curationSource = readFileSync(new URL('../src/curation.js', import.meta.url), 'utf8')
+  .replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
+const source = curationSource + readFileSync(new URL('../src/main.js', import.meta.url), 'utf8')
   .replace(/^import .*;\n/gm, '')
   .replaceAll('import.meta.env.BASE_URL', '"/"')
   .replace('void startStillroom();', '');
@@ -361,4 +363,21 @@ test('session change removes private DOM immediately while the old bootstrap is 
   assert.equal(h.run('state.activeAccountId'), null);
   assert.equal(h.run('state.authLoading && state.dataLoading'), true);
   assert.equal(h.run('state.shelves.length'), 0);
+});
+
+test('Edit board initializes cover, creative description and profile asset fields', () => {
+  const h = harness();
+  h.run(`state.activeAccountId = 'artist'; state.boardCoverLoading = true; state.boardCoverError = 'x';
+    state.boards = [{ id: 'board', ownerId: 'artist', artistName: 'Board', discipline: 'Music', biography: 'Bio',
+      profileImage: '/p', profileImageAssetId: 'pa', coverImage: '/c', coverImageAssetId: 'ca', creativeDescription: 'Lines' }];
+    beginBoardForm('edit');`);
+  const draft = JSON.parse(h.run('JSON.stringify(state.boardDraft)'));
+  assert.equal(draft.coverImageAssetId, 'ca');
+  assert.equal(draft.coverImage, '/c');
+  assert.equal(draft.creativeDescription, 'Lines');
+  assert.equal(draft.profileImageAssetId, 'pa');
+  assert.equal(h.run('state.boardCoverLoading'), false);
+  assert.equal(h.run('state.boardCoverError'), '');
+  h.run('state.boardDraft = null; state.route = "/artists/edit"; renderBoardForm("edit");');
+  assert.equal(JSON.parse(h.run('JSON.stringify(state.boardDraft)')).coverImageAssetId, 'ca');
 });

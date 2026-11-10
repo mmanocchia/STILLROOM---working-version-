@@ -9,6 +9,142 @@ import * as zod from 'zod';
 
 
 /**
+ * @summary Public featured Fan posts and paginated Artist Collections
+ */
+export const GetBoardCurationParams = zod.object({
+  "boardId": zod.coerce.string().uuid()
+})
+
+export const getBoardCurationQueryPageDefault = 0;
+export const getBoardCurationQueryPageMin = 0;
+export const getBoardCurationQueryPageMax = 50000;
+
+export const getBoardCurationQueryCollectionPageDefault = 0;
+export const getBoardCurationQueryCollectionPageMin = 0;
+export const getBoardCurationQueryCollectionPageMax = 50000;
+
+
+
+export const GetBoardCurationQueryParams = zod.object({
+  "collectionId": zod.coerce.string().uuid().optional(),
+  "page": zod.coerce.number().int().min(getBoardCurationQueryPageMin).max(getBoardCurationQueryPageMax).default(getBoardCurationQueryPageDefault),
+  "collectionPage": zod.coerce.number().int().min(getBoardCurationQueryCollectionPageMin).max(getBoardCurationQueryCollectionPageMax).default(getBoardCurationQueryCollectionPageDefault)
+})
+
+export const getBoardCurationResponseFeaturedPostIdsMax = 5;
+
+
+
+export const GetBoardCurationResponse = zod.object({
+  "boardId": zod.string().uuid(),
+  "featuredPostIds": zod.array(zod.string().uuid()).max(getBoardCurationResponseFeaturedPostIdsMax),
+  "collections": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "boardId": zod.string().uuid(),
+  "title": zod.string(),
+  "description": zod.string(),
+  "position": zod.number().int(),
+  "postCount": zod.number().int(),
+  "cover": zod.union([zod.null(),zod.object({
+  "url": zod.string(),
+  "type": zod.enum(['image', 'video'])
+})])
+})),
+  "collectionPagination": zod.object({
+  "page": zod.number().int().optional(),
+  "pageSize": zod.number().int(),
+  "hasMore": zod.boolean(),
+  "nextCursor": zod.string().nullish()
+}),
+  "selectedCollection": zod.union([zod.object({
+  "id": zod.string().uuid(),
+  "boardId": zod.string().uuid(),
+  "title": zod.string(),
+  "description": zod.string(),
+  "position": zod.number().int(),
+  "postCount": zod.number().int(),
+  "cover": zod.union([zod.null(),zod.object({
+  "url": zod.string(),
+  "type": zod.enum(['image', 'video'])
+})])
+}),zod.null()]),
+  "collectionPostIds": zod.array(zod.string().uuid()),
+  "postPagination": zod.object({
+  "page": zod.number().int().optional(),
+  "pageSize": zod.number().int(),
+  "hasMore": zod.boolean(),
+  "nextCursor": zod.string().nullish()
+}),
+  "snapshot": zod.object({
+  "commentPagination": zod.record(zod.string(), zod.object({
+  "page": zod.number().int().optional(),
+  "pageSize": zod.number().int(),
+  "hasMore": zod.boolean(),
+  "nextCursor": zod.string().nullish()
+})).optional(),
+  "shelfPagination": zod.object({
+  "page": zod.number().int().optional(),
+  "pageSize": zod.number().int(),
+  "hasMore": zod.boolean(),
+  "nextCursor": zod.string().nullish()
+}).optional(),
+  "interactionPostId": zod.string().optional(),
+  "commentResult": zod.record(zod.string(), zod.unknown()).optional().describe('Existing vanilla SPA record shape, containing IDs and display fields but no credentials or storage object paths.'),
+  "deletedCommentId": zod.string().nullish(),
+  "pagination": zod.object({
+  "page": zod.number().int(),
+  "pageSize": zod.number().int(),
+  "hasMore": zod.boolean(),
+  "nextCursor": zod.string().nullish()
+}).optional(),
+  "discovery": zod.object({
+  "artistIds": zod.array(zod.string()),
+  "boardIds": zod.array(zod.string()),
+  "postIds": zod.array(zod.string()),
+  "repostIds": zod.array(zod.string()).optional()
+}).optional(),
+  "userId": zod.string().nullable(),
+  "profileId": zod.string().nullable(),
+  "accounts": zod.array(zod.object({
+  "id": zod.string(),
+  "role": zod.enum(['Fan', 'Artist']),
+  "name": zod.string(),
+  "username": zod.string(),
+  "biography": zod.string(),
+  "interests": zod.string(),
+  "profileImage": zod.string(),
+  "profileImageAssetId": zod.string().nullish(),
+  "createdAt": zod.number()
+})),
+  "boards": zod.array(zod.record(zod.string(), zod.unknown()).describe('Existing vanilla SPA record shape, containing IDs and display fields but no credentials or storage object paths.')),
+  "posts": zod.array(zod.record(zod.string(), zod.unknown()).describe('Existing vanilla SPA record shape, containing IDs and display fields but no credentials or storage object paths.')),
+  "comments": zod.array(zod.record(zod.string(), zod.unknown()).describe('Existing vanilla SPA record shape, containing IDs and display fields but no credentials or storage object paths.')),
+  "reposts": zod.array(zod.record(zod.string(), zod.unknown()).describe('Existing vanilla SPA record shape, containing IDs and display fields but no credentials or storage object paths.')),
+  "shelves": zod.array(zod.record(zod.string(), zod.unknown()).describe('Existing vanilla SPA record shape, containing IDs and display fields but no credentials or storage object paths.')),
+  "followedArtistsByFan": zod.record(zod.string(), zod.array(zod.string())),
+  "postDrafts": zod.record(zod.string(), zod.record(zod.string(), zod.unknown()).describe('Existing vanilla SPA record shape, containing IDs and display fields but no credentials or storage object paths.'))
+})
+})
+
+
+/**
+ * @summary Board-owner-only curation commands
+ */
+export const ManageBoardCurationParams = zod.object({
+  "boardId": zod.coerce.string().uuid()
+})
+
+export const ManageBoardCurationBody = zod.object({
+  "action": zod.enum(['feature.set', 'feature.move', 'collection.save', 'collection.delete', 'collection.move', 'collection.post']),
+  "payload": zod.record(zod.string(), zod.unknown())
+})
+
+export const ManageBoardCurationResponse = zod.object({
+  "ok": zod.boolean()
+})
+
+
+/**
  * @summary Get the verified Clerk identity and optional Stillroom profile
  */
 export const GetCurrentUserResponse = zod.object({

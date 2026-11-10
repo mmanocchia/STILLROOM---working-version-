@@ -20,3 +20,9 @@ Fans and Artists may comment on public Fan posts. Only the Artist who owns the o
 **Why:** The persistent Comments requirements explicitly allow both roles to participate while retaining the existing publishing restrictions.
 
 **How to apply:** Derive comment authorship, roles, and Board ownership from authenticated IDs and relational records, never request-body claims.
+
+Artist Collections are public curation of Fan Posts from that Artist's own Board, distinct from personal Shelves. Artists highlight and organize original Fan contributions; curation must not turn into original Artist publishing or copied Fan content.
+
+**Why:** The user explicitly requested meaningful Artist curation while retaining Stillroom as a fan-created content platform.
+
+**How to apply:** Keep Artist curation relationships separate from personal Shelf privacy and original post ownership. Preserve Fan attribution and remove unavailable original-post references safely.

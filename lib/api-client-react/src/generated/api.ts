@@ -21,14 +21,18 @@ import type {
 
 import type {
   ApiFailureResponse,
+  BoardCuration,
   CommentPage,
   CompleteStillroomUpload200,
   CreateStillroomProfile201,
+  CurationCommand,
+  GetBoardCurationParams,
   GetCurrentUser200,
   GetStillroomBootstrapParams,
   GetStillroomCommentsParams,
   GetStillroomShelvesParams,
   HealthStatus,
+  ManageBoardCuration200,
   ProfileOnboardingInput,
   RequestStillroomUpload201,
   RunStillroomActionParams,
@@ -65,6 +69,184 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getGetBoardCurationUrl = (boardId: string,
+    params?: GetBoardCurationParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/social/boards/${boardId}/curation?${stringifiedParams}` : `/api/social/boards/${boardId}/curation`
+}
+
+/**
+ * @summary Public featured Fan posts and paginated Artist Collections
+ */
+export const getBoardCuration = async (boardId: string,
+    params?: GetBoardCurationParams, options?: Parameters<typeof customFetch>[1]): Promise<BoardCuration> => {
+
+  return customFetch<BoardCuration>(getGetBoardCurationUrl(boardId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetBoardCurationQueryKey = (boardId: string,
+    params?: GetBoardCurationParams,) => {
+    return [
+    `/api/social/boards/${boardId}/curation`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetBoardCurationQueryOptions = <TData = Awaited<ReturnType<typeof getBoardCuration>>, TError = ErrorType<ApiFailureResponse>>(boardId: string,
+    params?: GetBoardCurationParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBoardCuration>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBoardCurationQueryKey(boardId,params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBoardCuration>>> = ({ signal }) => getBoardCuration(boardId,params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: boardId !== null && boardId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBoardCuration>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetBoardCurationQueryResult = NonNullable<Awaited<ReturnType<typeof getBoardCuration>>>
+export type GetBoardCurationQueryError = ErrorType<ApiFailureResponse>
+
+
+/**
+ * @summary Public featured Fan posts and paginated Artist Collections
+ */
+
+export function useGetBoardCuration<TData = Awaited<ReturnType<typeof getBoardCuration>>, TError = ErrorType<ApiFailureResponse>>(
+ boardId: string,
+    params?: GetBoardCurationParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBoardCuration>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetBoardCurationQueryOptions(boardId,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getManageBoardCurationUrl = (boardId: string,) => {
+
+
+
+
+  return `/api/social/boards/${boardId}/curation`
+}
+
+/**
+ * @summary Board-owner-only curation commands
+ */
+export const manageBoardCuration = async (boardId: string,
+    curationCommand: CurationCommand, options?: Parameters<typeof customFetch>[1]): Promise<ManageBoardCuration200> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<ManageBoardCuration200>(getManageBoardCurationUrl(boardId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(curationCommand)
+  }
+);}
+
+
+
+
+
+export const getManageBoardCurationMutationKey = () => ['manageBoardCuration'] as const;
+
+export const getManageBoardCurationMutationOptions = <TError = ErrorType<ApiFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof manageBoardCuration>>, TError,ManageBoardCurationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof manageBoardCuration>>, TError,ManageBoardCurationMutationVariables, TContext> => {
+
+const mutationKey = getManageBoardCurationMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof manageBoardCuration>>, ManageBoardCurationMutationVariables> = (props) => {
+          const {boardId,data} = props ?? {};
+
+          return  manageBoardCuration(boardId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ManageBoardCurationMutationResult = NonNullable<Awaited<ReturnType<typeof manageBoardCuration>>>
+    export type ManageBoardCurationMutationBody = BodyType<CurationCommand>
+    export type ManageBoardCurationMutationError = ErrorType<ApiFailureResponse>
+    export type ManageBoardCurationMutationVariables = {boardId: string;data: BodyType<CurationCommand>}
+
+    /**
+ * @summary Board-owner-only curation commands
+ */
+export const useManageBoardCuration = <TError = ErrorType<ApiFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof manageBoardCuration>>, TError,ManageBoardCurationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof manageBoardCuration>>,
+        TError,
+        ManageBoardCurationMutationVariables,
+        TContext
+      > => {
+      return useMutation(getManageBoardCurationMutationOptions(options));
+    }
 
 export const getGetCurrentUserUrl = () => {
 

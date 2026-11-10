@@ -7,9 +7,17 @@
  */
 
 export * from './apiFailureResponse';
+export * from './artistCollection';
+export * from './artistCollectionCover';
+export * from './artistCollectionCoverType';
+export * from './boardCuration';
 export * from './commentPage';
 export * from './completeStillroomUpload200';
 export * from './createStillroomProfile201';
+export * from './curationCommand';
+export * from './curationCommandAction';
+export * from './curationCommandPayload';
+export * from './getBoardCurationParams';
 export * from './getCurrentUser200';
 export * from './getStillroomBootstrapArtistList';
 export * from './getStillroomBootstrapCategory';
@@ -21,6 +29,7 @@ export * from './getStillroomBootstrapView';
 export * from './getStillroomCommentsParams';
 export * from './getStillroomShelvesParams';
 export * from './healthStatus';
+export * from './manageBoardCuration200';
 export * from './profileOnboardingInput';
 export * from './profileOnboardingInputRole';
 export * from './requestStillroomUpload201';
