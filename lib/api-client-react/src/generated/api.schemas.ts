@@ -5,6 +5,90 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export interface AccountInformationInput {
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  name: string;
+  /**
+     * @minLength 1
+     * @maxLength 32
+     */
+  username: string;
+  /** @maxLength 2000 */
+  biography: string;
+  /** @nullable */
+  profileImageAssetId: string | null;
+}
+
+export type AccountDeletionInputConfirmation = typeof AccountDeletionInputConfirmation[keyof typeof AccountDeletionInputConfirmation];
+
+
+export const AccountDeletionInputConfirmation = {
+  DELETE: 'DELETE',
+} as const;
+
+export interface AccountDeletionInput {
+  confirmation: AccountDeletionInputConfirmation;
+  artistCascadeConfirmed: boolean;
+  /** @pattern ^[a-f0-9]{64}$ */
+  receipt: string;
+}
+
+export interface DeletionReceiptInput {
+  /** @pattern ^[a-f0-9]{64}$ */
+  receipt: string;
+}
+
+export type AccountDeletionStatusStatus = typeof AccountDeletionStatusStatus[keyof typeof AccountDeletionStatusStatus];
+
+
+export const AccountDeletionStatusStatus = {
+  pending: 'pending',
+  complete: 'complete',
+} as const;
+
+export interface AccountDeletionStatus {
+  status: AccountDeletionStatusStatus;
+  message: string;
+  pendingMedia: number;
+  authenticationRemoved: boolean;
+  applicationDataRemoved: boolean;
+}
+
+export type AccountSettingsPrivacy = {
+  publicFields: string[];
+  deletionExplanation: string;
+};
+
+export type StillroomProfileRole = typeof StillroomProfileRole[keyof typeof StillroomProfileRole];
+
+
+export const StillroomProfileRole = {
+  Fan: 'Fan',
+  Artist: 'Artist',
+} as const;
+
+export interface StillroomProfile {
+  id: string;
+  role: StillroomProfileRole;
+  name: string;
+  username: string;
+  biography: string;
+  interests: string;
+  profileImage: string;
+  /** @nullable */
+  profileImageAssetId?: string | null;
+  createdAt: number;
+}
+
+export interface AccountSettings {
+  profile: StillroomProfile;
+  privacy: AccountSettingsPrivacy;
+  deletion: AccountDeletionStatus | null;
+}
+
 export type CurationCommandAction = typeof CurationCommandAction[keyof typeof CurationCommandAction];
 
 
@@ -59,27 +143,6 @@ export interface SocialPagination {
  * Existing vanilla SPA record shape, containing IDs and display fields but no credentials or storage object paths.
  */
 export interface SocialRecord { [key: string]: unknown }
-
-export type StillroomProfileRole = typeof StillroomProfileRole[keyof typeof StillroomProfileRole];
-
-
-export const StillroomProfileRole = {
-  Fan: 'Fan',
-  Artist: 'Artist',
-} as const;
-
-export interface StillroomProfile {
-  id: string;
-  role: StillroomProfileRole;
-  name: string;
-  username: string;
-  biography: string;
-  interests: string;
-  profileImage: string;
-  /** @nullable */
-  profileImageAssetId?: string | null;
-  createdAt: number;
-}
 
 export type StillroomBootstrapCommentPagination = {[key: string]: SocialPagination};
 
@@ -236,6 +299,18 @@ export interface HealthStatus {
 
 export type ApiFailureResponse = {
   error: string;
+};
+
+export type CheckAccountUsernameParams = {
+/**
+ * @maxLength 100
+ */
+username: string;
+};
+
+export type CheckAccountUsername200 = {
+  valid: boolean;
+  available: boolean;
 };
 
 export type GetBoardCurationParams = {

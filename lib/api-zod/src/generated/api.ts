@@ -8,6 +8,137 @@
 import * as zod from 'zod';
 
 
+export const GetAccountSettingsResponse = zod.object({
+  "profile": zod.object({
+  "id": zod.string(),
+  "role": zod.enum(['Fan', 'Artist']),
+  "name": zod.string(),
+  "username": zod.string(),
+  "biography": zod.string(),
+  "interests": zod.string(),
+  "profileImage": zod.string(),
+  "profileImageAssetId": zod.string().nullish(),
+  "createdAt": zod.number()
+}),
+  "privacy": zod.object({
+  "publicFields": zod.array(zod.string()),
+  "deletionExplanation": zod.string()
+}),
+  "deletion": zod.union([zod.object({
+  "status": zod.enum(['pending', 'complete']),
+  "message": zod.string(),
+  "pendingMedia": zod.number().int(),
+  "authenticationRemoved": zod.boolean(),
+  "applicationDataRemoved": zod.boolean()
+}),zod.null()])
+})
+
+
+export const updateAccountSettingsBodyNameMax = 100;
+
+export const updateAccountSettingsBodyUsernameMax = 32;
+
+export const updateAccountSettingsBodyBiographyMax = 2000;
+
+
+
+export const UpdateAccountSettingsBody = zod.object({
+  "name": zod.string().min(1).max(updateAccountSettingsBodyNameMax),
+  "username": zod.string().min(1).max(updateAccountSettingsBodyUsernameMax),
+  "biography": zod.string().max(updateAccountSettingsBodyBiographyMax),
+  "profileImageAssetId": zod.string().uuid().nullable()
+})
+
+export const UpdateAccountSettingsResponse = zod.object({
+  "profile": zod.object({
+  "id": zod.string(),
+  "role": zod.enum(['Fan', 'Artist']),
+  "name": zod.string(),
+  "username": zod.string(),
+  "biography": zod.string(),
+  "interests": zod.string(),
+  "profileImage": zod.string(),
+  "profileImageAssetId": zod.string().nullish(),
+  "createdAt": zod.number()
+}),
+  "privacy": zod.object({
+  "publicFields": zod.array(zod.string()),
+  "deletionExplanation": zod.string()
+}),
+  "deletion": zod.union([zod.object({
+  "status": zod.enum(['pending', 'complete']),
+  "message": zod.string(),
+  "pendingMedia": zod.number().int(),
+  "authenticationRemoved": zod.boolean(),
+  "applicationDataRemoved": zod.boolean()
+}),zod.null()])
+})
+
+
+export const checkAccountUsernameQueryUsernameMax = 100;
+
+
+
+export const CheckAccountUsernameQueryParams = zod.object({
+  "username": zod.coerce.string().max(checkAccountUsernameQueryUsernameMax)
+})
+
+export const CheckAccountUsernameResponse = zod.object({
+  "valid": zod.boolean(),
+  "available": zod.boolean()
+})
+
+
+export const requestAccountDeletionBodyReceiptRegExp = new RegExp('^[a-f0-9]{64}$');
+
+
+export const RequestAccountDeletionBody = zod.object({
+  "confirmation": zod.enum(['DELETE']),
+  "artistCascadeConfirmed": zod.boolean(),
+  "receipt": zod.string().regex(requestAccountDeletionBodyReceiptRegExp)
+})
+
+export const RequestAccountDeletionResponse = zod.object({
+  "status": zod.enum(['pending', 'complete']),
+  "message": zod.string(),
+  "pendingMedia": zod.number().int(),
+  "authenticationRemoved": zod.boolean(),
+  "applicationDataRemoved": zod.boolean()
+})
+
+
+export const getAccountDeletionStatusBodyReceiptRegExp = new RegExp('^[a-f0-9]{64}$');
+
+
+export const GetAccountDeletionStatusBody = zod.object({
+  "receipt": zod.string().regex(getAccountDeletionStatusBodyReceiptRegExp)
+})
+
+export const GetAccountDeletionStatusResponse = zod.object({
+  "status": zod.enum(['pending', 'complete']),
+  "message": zod.string(),
+  "pendingMedia": zod.number().int(),
+  "authenticationRemoved": zod.boolean(),
+  "applicationDataRemoved": zod.boolean()
+})
+
+
+export const retryAccountDeletionBodyReceiptRegExp = new RegExp('^[a-f0-9]{64}$');
+
+
+export const RetryAccountDeletionBody = zod.object({
+  "receipt": zod.string().regex(retryAccountDeletionBodyReceiptRegExp)
+})
+
+export const RetryAccountDeletionResponse = zod.object({
+  "status": zod.enum(['pending', 'complete']),
+  "message": zod.string(),
+  "pendingMedia": zod.number().int(),
+  "authenticationRemoved": zod.boolean(),
+  "applicationDataRemoved": zod.boolean()
+})
+
+
 /**
  * @summary Public featured Fan posts and paginated Artist Collections
  */

@@ -4,7 +4,7 @@ import { Router } from "express";
 import type { Request } from "express";
 import { Readable } from "stream";
 import { z } from "zod";
-import { artistBoards, db, mediaAssets, posts, profiles } from "@workspace/db";
+import { artistBoards, db, mediaAssets, pool, posts, profiles } from "@workspace/db";
 import { ObjectNotFoundError, ObjectStorageService } from "../lib/objectStorage";
 import { allowedUpload, hasMediaSignature } from "../lib/mediaValidation";
 
@@ -50,6 +50,8 @@ router.post("/storage/uploads/request-url", async (req, res): Promise<void> => {
     const [asset] = await db.insert(mediaAssets).values({
       ownerId,
       objectPath,
+      uploadObjectPath: objectPath,
+      uploadExpiresAt: new Date(Date.now() + 16 * 60 * 1000),
       name: parsed.data.name,
       contentType: parsed.data.contentType,
       size: parsed.data.size,
@@ -75,6 +77,17 @@ router.post("/storage/uploads/complete", async (req, res): Promise<void> => {
   const parsed = z.object({ assetId: z.string().uuid() }).safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Upload reference is invalid." });
+    return;
+  }
+  // Serialize with account erasure. Otherwise a copy finishing after the
+  // deletion snapshot could leave an untracked final object in storage.
+  const guard = await pool.connect();
+  try {
+  await guard.query("BEGIN");
+  await guard.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`delete:${ownerId}`]);
+  const owner = await guard.query("SELECT id FROM stillroom_profiles WHERE id=$1", [ownerId]);
+  if (!owner.rows.length) {
+    res.status(403).json({ error: "Your account is not available." });
     return;
   }
   const [asset] = await db.select().from(mediaAssets).where(and(
@@ -103,7 +116,7 @@ router.post("/storage/uploads/complete", async (req, res): Promise<void> => {
       res.status(400).json({ error: "The uploaded file does not match a supported image or video format." });
       return;
     }
-    const immutablePath = await storage.finalizeVerifiedUpload(file, String(metadata.generation));
+    const immutablePath = await storage.finalizeVerifiedUpload(file, String(metadata.generation), asset.id);
     const [readyAsset] = await db.update(mediaAssets)
       .set({ status: "ready", objectPath: immutablePath })
       .where(and(eq(mediaAssets.id, asset.id), eq(mediaAssets.ownerId, ownerId)))
@@ -116,6 +129,10 @@ router.post("/storage/uploads/complete", async (req, res): Promise<void> => {
     }
     req.log.error({ err: error }, "Could not verify uploaded media");
     res.status(503).json({ error: "The uploaded file could not be verified." });
+  }
+  } finally {
+    await guard.query("ROLLBACK");
+    guard.release();
   }
 });
 

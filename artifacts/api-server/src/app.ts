@@ -5,6 +5,7 @@ import { clerkMiddleware } from "@clerk/express";
 import { publishableKeyFromHost } from "@clerk/shared/keys";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { AccountError } from "./lib/accountDeletion";
 import {
   CLERK_PROXY_PATH,
   clerkProxyMiddleware,
@@ -72,6 +73,10 @@ app.use("/api", (req, res, next) => {
 app.use("/api", router);
 
 const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
+  if (error instanceof AccountError) {
+    res.status(error.status).json({ error: error.message, code: error.code });
+    return;
+  }
   req.log.error({ err: error }, "Unhandled API request error");
   res.status(500).json({ error: "Stillroom could not complete this request. Please try again." });
 };

@@ -19,3 +19,4 @@
 
 export * from "./stillroom";
 export * from "./curation";
+export * from "./accountDeletion";

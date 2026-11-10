@@ -70,6 +70,8 @@ export const mediaAssets = pgTable(
       .notNull()
       .references(() => profiles.id, { onDelete: "cascade" }),
     objectPath: text("object_path").notNull().unique(),
+    uploadObjectPath: text("upload_object_path"),
+    uploadExpiresAt: timestamp("upload_expires_at", { withTimezone: true }),
     name: text("name").notNull(),
     contentType: text("content_type").notNull(),
     size: integer("size").notNull(),

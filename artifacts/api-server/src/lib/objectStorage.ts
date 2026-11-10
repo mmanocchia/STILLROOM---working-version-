@@ -67,10 +67,14 @@ export class ObjectStorageService {
     return file;
   }
 
-  async finalizeVerifiedUpload(file: File, generation: string): Promise<string> {
-    const finalPath = `${this.getPrivateObjectDir()}/assets/${randomUUID()}`;
+  async finalizeVerifiedUpload(file: File, generation: string, assetId?: string): Promise<string> {
+    if (assetId && !/^[a-f0-9-]{36}$/.test(assetId)) throw new Error("Invalid asset identifier");
+    // A pending upload's destination is recoverable from its durable asset ID,
+    // even if the process stops after copying but before updating metadata.
+    const finalPath = `${this.getPrivateObjectDir()}/assets/${assetId || randomUUID()}`;
     const { bucketName, objectName } = parseObjectPath(finalPath);
     const destination = objectStorageClient.bucket(bucketName).file(objectName);
+    if (assetId) await destination.delete({ ignoreNotFound: true });
     const verifiedSource = file.bucket.file(file.name, { generation });
     await verifiedSource.copy(destination, { preconditionOpts: { ifGenerationMatch: 0 } });
     await verifiedSource.delete({ ignoreNotFound: true });

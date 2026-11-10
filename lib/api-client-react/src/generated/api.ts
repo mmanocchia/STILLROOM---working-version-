@@ -20,12 +20,19 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AccountDeletionInput,
+  AccountDeletionStatus,
+  AccountInformationInput,
+  AccountSettings,
   ApiFailureResponse,
   BoardCuration,
+  CheckAccountUsername200,
+  CheckAccountUsernameParams,
   CommentPage,
   CompleteStillroomUpload200,
   CreateStillroomProfile201,
   CurationCommand,
+  DeletionReceiptInput,
   GetBoardCurationParams,
   GetCurrentUser200,
   GetStillroomBootstrapParams,
@@ -69,6 +76,483 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getGetAccountSettingsUrl = () => {
+
+
+
+
+  return `/api/account/settings`
+}
+
+export const getAccountSettings = async ( options?: Parameters<typeof customFetch>[1]): Promise<AccountSettings> => {
+
+  return customFetch<AccountSettings>(getGetAccountSettingsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAccountSettingsQueryKey = () => {
+    return [
+    `/api/account/settings`
+    ] as const;
+    }
+
+
+export const getGetAccountSettingsQueryOptions = <TData = Awaited<ReturnType<typeof getAccountSettings>>, TError = ErrorType<ApiFailureResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountSettings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAccountSettingsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAccountSettings>>> = ({ signal }) => getAccountSettings({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAccountSettings>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAccountSettingsQueryResult = NonNullable<Awaited<ReturnType<typeof getAccountSettings>>>
+export type GetAccountSettingsQueryError = ErrorType<ApiFailureResponse>
+
+
+
+export function useGetAccountSettings<TData = Awaited<ReturnType<typeof getAccountSettings>>, TError = ErrorType<ApiFailureResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAccountSettings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAccountSettingsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateAccountSettingsUrl = () => {
+
+
+
+
+  return `/api/account/settings`
+}
+
+export const updateAccountSettings = async (accountInformationInput: AccountInformationInput, options?: Parameters<typeof customFetch>[1]): Promise<AccountSettings> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AccountSettings>(getUpdateAccountSettingsUrl(),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(accountInformationInput)
+  }
+);}
+
+
+
+
+
+export const getUpdateAccountSettingsMutationKey = () => ['updateAccountSettings'] as const;
+
+export const getUpdateAccountSettingsMutationOptions = <TError = ErrorType<ApiFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAccountSettings>>, TError,UpdateAccountSettingsMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAccountSettings>>, TError,UpdateAccountSettingsMutationVariables, TContext> => {
+
+const mutationKey = getUpdateAccountSettingsMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAccountSettings>>, UpdateAccountSettingsMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateAccountSettings(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAccountSettingsMutationResult = NonNullable<Awaited<ReturnType<typeof updateAccountSettings>>>
+    export type UpdateAccountSettingsMutationBody = BodyType<AccountInformationInput>
+    export type UpdateAccountSettingsMutationError = ErrorType<ApiFailureResponse>
+    export type UpdateAccountSettingsMutationVariables = {data: BodyType<AccountInformationInput>}
+
+    export const useUpdateAccountSettings = <TError = ErrorType<ApiFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAccountSettings>>, TError,UpdateAccountSettingsMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateAccountSettings>>,
+        TError,
+        UpdateAccountSettingsMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateAccountSettingsMutationOptions(options));
+    }
+
+export const getCheckAccountUsernameUrl = (params: CheckAccountUsernameParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/account/username?${stringifiedParams}` : `/api/account/username`
+}
+
+export const checkAccountUsername = async (params: CheckAccountUsernameParams, options?: Parameters<typeof customFetch>[1]): Promise<CheckAccountUsername200> => {
+
+  return customFetch<CheckAccountUsername200>(getCheckAccountUsernameUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getCheckAccountUsernameQueryKey = (params?: CheckAccountUsernameParams,) => {
+    return [
+    `/api/account/username`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getCheckAccountUsernameQueryOptions = <TData = Awaited<ReturnType<typeof checkAccountUsername>>, TError = ErrorType<ApiFailureResponse>>(params: CheckAccountUsernameParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof checkAccountUsername>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getCheckAccountUsernameQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof checkAccountUsername>>> = ({ signal }) => checkAccountUsername(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof checkAccountUsername>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type CheckAccountUsernameQueryResult = NonNullable<Awaited<ReturnType<typeof checkAccountUsername>>>
+export type CheckAccountUsernameQueryError = ErrorType<ApiFailureResponse>
+
+
+
+export function useCheckAccountUsername<TData = Awaited<ReturnType<typeof checkAccountUsername>>, TError = ErrorType<ApiFailureResponse>>(
+ params: CheckAccountUsernameParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof checkAccountUsername>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getCheckAccountUsernameQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRequestAccountDeletionUrl = () => {
+
+
+
+
+  return `/api/account/deletion`
+}
+
+export const requestAccountDeletion = async (accountDeletionInput: AccountDeletionInput, options?: Parameters<typeof customFetch>[1]): Promise<AccountDeletionStatus> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AccountDeletionStatus>(getRequestAccountDeletionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(accountDeletionInput)
+  }
+);}
+
+
+
+
+
+export const getRequestAccountDeletionMutationKey = () => ['requestAccountDeletion'] as const;
+
+export const getRequestAccountDeletionMutationOptions = <TError = ErrorType<ApiFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestAccountDeletion>>, TError,RequestAccountDeletionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof requestAccountDeletion>>, TError,RequestAccountDeletionMutationVariables, TContext> => {
+
+const mutationKey = getRequestAccountDeletionMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof requestAccountDeletion>>, RequestAccountDeletionMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  requestAccountDeletion(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RequestAccountDeletionMutationResult = NonNullable<Awaited<ReturnType<typeof requestAccountDeletion>>>
+    export type RequestAccountDeletionMutationBody = BodyType<AccountDeletionInput>
+    export type RequestAccountDeletionMutationError = ErrorType<ApiFailureResponse>
+    export type RequestAccountDeletionMutationVariables = {data: BodyType<AccountDeletionInput>}
+
+    export const useRequestAccountDeletion = <TError = ErrorType<ApiFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestAccountDeletion>>, TError,RequestAccountDeletionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof requestAccountDeletion>>,
+        TError,
+        RequestAccountDeletionMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRequestAccountDeletionMutationOptions(options));
+    }
+
+export const getGetAccountDeletionStatusUrl = () => {
+
+
+
+
+  return `/api/account/deletion/status`
+}
+
+export const getAccountDeletionStatus = async (deletionReceiptInput: DeletionReceiptInput, options?: Parameters<typeof customFetch>[1]): Promise<AccountDeletionStatus> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AccountDeletionStatus>(getGetAccountDeletionStatusUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(deletionReceiptInput)
+  }
+);}
+
+
+
+
+
+export const getGetAccountDeletionStatusMutationKey = () => ['getAccountDeletionStatus'] as const;
+
+export const getGetAccountDeletionStatusMutationOptions = <TError = ErrorType<ApiFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof getAccountDeletionStatus>>, TError,GetAccountDeletionStatusMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof getAccountDeletionStatus>>, TError,GetAccountDeletionStatusMutationVariables, TContext> => {
+
+const mutationKey = getGetAccountDeletionStatusMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof getAccountDeletionStatus>>, GetAccountDeletionStatusMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  getAccountDeletionStatus(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type GetAccountDeletionStatusMutationResult = NonNullable<Awaited<ReturnType<typeof getAccountDeletionStatus>>>
+    export type GetAccountDeletionStatusMutationBody = BodyType<DeletionReceiptInput>
+    export type GetAccountDeletionStatusMutationError = ErrorType<ApiFailureResponse>
+    export type GetAccountDeletionStatusMutationVariables = {data: BodyType<DeletionReceiptInput>}
+
+    export const useGetAccountDeletionStatus = <TError = ErrorType<ApiFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof getAccountDeletionStatus>>, TError,GetAccountDeletionStatusMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof getAccountDeletionStatus>>,
+        TError,
+        GetAccountDeletionStatusMutationVariables,
+        TContext
+      > => {
+      return useMutation(getGetAccountDeletionStatusMutationOptions(options));
+    }
+
+export const getRetryAccountDeletionUrl = () => {
+
+
+
+
+  return `/api/account/deletion/retry`
+}
+
+export const retryAccountDeletion = async (deletionReceiptInput: DeletionReceiptInput, options?: Parameters<typeof customFetch>[1]): Promise<AccountDeletionStatus> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AccountDeletionStatus>(getRetryAccountDeletionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(deletionReceiptInput)
+  }
+);}
+
+
+
+
+
+export const getRetryAccountDeletionMutationKey = () => ['retryAccountDeletion'] as const;
+
+export const getRetryAccountDeletionMutationOptions = <TError = ErrorType<ApiFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryAccountDeletion>>, TError,RetryAccountDeletionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof retryAccountDeletion>>, TError,RetryAccountDeletionMutationVariables, TContext> => {
+
+const mutationKey = getRetryAccountDeletionMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retryAccountDeletion>>, RetryAccountDeletionMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  retryAccountDeletion(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RetryAccountDeletionMutationResult = NonNullable<Awaited<ReturnType<typeof retryAccountDeletion>>>
+    export type RetryAccountDeletionMutationBody = BodyType<DeletionReceiptInput>
+    export type RetryAccountDeletionMutationError = ErrorType<ApiFailureResponse>
+    export type RetryAccountDeletionMutationVariables = {data: BodyType<DeletionReceiptInput>}
+
+    export const useRetryAccountDeletion = <TError = ErrorType<ApiFailureResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryAccountDeletion>>, TError,RetryAccountDeletionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof retryAccountDeletion>>,
+        TError,
+        RetryAccountDeletionMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRetryAccountDeletionMutationOptions(options));
+    }
 
 export const getGetBoardCurationUrl = (boardId: string,
     params?: GetBoardCurationParams,) => {

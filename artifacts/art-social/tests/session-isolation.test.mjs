@@ -7,12 +7,14 @@ import { appendPublicSnapshot, patchInteraction, PUBLIC_WINDOW_LIMIT } from '../
 // Exercise the actual vanilla SPA handlers without starting Clerk or a server.
 const curationSource = readFileSync(new URL('../src/curation.js', import.meta.url), 'utf8')
   .replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
-const source = curationSource + readFileSync(new URL('../src/main.js', import.meta.url), 'utf8')
+const settingsSource = readFileSync(new URL('../src/settings.js', import.meta.url), 'utf8')
+  .replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
+const source = curationSource + settingsSource + readFileSync(new URL('../src/main.js', import.meta.url), 'utf8')
   .replace(/^import .*;\n/gm, '')
   .replaceAll('import.meta.env.BASE_URL', '"/"')
   .replace('void startStillroom();', '');
 
-function harness() {
+function harness(initialPath = '/home') {
   let resolve;
   let reject;
   const request = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -20,10 +22,12 @@ function harness() {
   const context = vm.createContext({
     document: { querySelector: () => node, addEventListener() {} },
     window: {
-      location: { pathname: '/home' },
+      location: { pathname: initialPath },
       sessionStorage: { removeItem() {}, getItem() { return null; }, setItem() {} },
       addEventListener() {},
       setInterval() {},
+      clearTimeout,
+      setTimeout,
     },
     history: { replaceState() {} },
     FormData: class {
@@ -363,6 +367,13 @@ test('session change removes private DOM immediately while the old bootstrap is 
   assert.equal(h.run('state.activeAccountId'), null);
   assert.equal(h.run('state.authLoading && state.dataLoading'), true);
   assert.equal(h.run('state.shelves.length'), 0);
+});
+
+test('direct Settings, recovery, status and onboarding links survive initial route validation', () => {
+  for (const path of ['/settings', '/recover', '/deletion-status', '/profile/setup']) {
+    const h = harness(path);
+    assert.equal(h.run('state.route'), path);
+  }
 });
 
 test('Edit board initializes cover, creative description and profile asset fields', () => {

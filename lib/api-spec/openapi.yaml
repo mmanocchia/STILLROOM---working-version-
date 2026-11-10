@@ -11,6 +11,103 @@ tags:
   - name: health
     description: Health operations
 paths:
+  /account/settings:
+    get:
+      operationId: getAccountSettings
+      responses:
+        "200":
+          description: Own account information only
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountSettings" }
+        "401": { $ref: "#/components/responses/ApiFailure" }
+    patch:
+      operationId: updateAccountSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccountInformationInput" }
+      responses:
+        "200":
+          description: Profile updated without changing login credentials
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountSettings" }
+        "400": { $ref: "#/components/responses/ApiFailure" }
+        "401": { $ref: "#/components/responses/ApiFailure" }
+        "409": { $ref: "#/components/responses/ApiFailure" }
+        "429": { $ref: "#/components/responses/ApiFailure" }
+  /account/username:
+    get:
+      operationId: checkAccountUsername
+      parameters:
+        - { in: query, name: username, required: true, schema: { type: string, maxLength: 100 } }
+      responses:
+        "200":
+          description: Availability excluding the authenticated user's own handle
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [valid, available]
+                properties:
+                  valid: { type: boolean }
+                  available: { type: boolean }
+        "401": { $ref: "#/components/responses/ApiFailure" }
+        "429": { $ref: "#/components/responses/ApiFailure" }
+  /account/deletion:
+    post:
+      operationId: requestAccountDeletion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccountDeletionInput" }
+      responses:
+        "202":
+          description: Durable cleanup recorded and application data removed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountDeletionStatus" }
+        "400": { $ref: "#/components/responses/ApiFailure" }
+        "401": { $ref: "#/components/responses/ApiFailure" }
+        "403": { $ref: "#/components/responses/ApiFailure" }
+        "409": { $ref: "#/components/responses/ApiFailure" }
+        "429": { $ref: "#/components/responses/ApiFailure" }
+  /account/deletion/status:
+    post:
+      operationId: getAccountDeletionStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeletionReceiptInput" }
+      responses:
+        "200":
+          description: Receipt-scoped status without account information
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountDeletionStatus" }
+        "400": { $ref: "#/components/responses/ApiFailure" }
+        "404": { $ref: "#/components/responses/ApiFailure" }
+  /account/deletion/retry:
+    post:
+      operationId: retryAccountDeletion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeletionReceiptInput" }
+      responses:
+        "202":
+          description: An already confirmed deletion has been queued for retry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountDeletionStatus" }
+        "400": { $ref: "#/components/responses/ApiFailure" }
+        "404": { $ref: "#/components/responses/ApiFailure" }
+        "429": { $ref: "#/components/responses/ApiFailure" }
   /social/boards/{boardId}/curation:
     parameters:
       - { in: path, name: boardId, required: true, schema: { type: string, format: uuid } }
@@ -269,6 +366,53 @@ components:
             properties:
               error: { type: string }
   schemas:
+    AccountInformationInput:
+      type: object
+      additionalProperties: false
+      required: [name, username, biography, profileImageAssetId]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        username: { type: string, minLength: 1, maxLength: 32 }
+        biography: { type: string, maxLength: 2000 }
+        profileImageAssetId: { type: [string, "null"], format: uuid }
+    AccountDeletionInput:
+      type: object
+      additionalProperties: false
+      required: [confirmation, artistCascadeConfirmed, receipt]
+      properties:
+        confirmation: { type: string, enum: [DELETE] }
+        artistCascadeConfirmed: { type: boolean }
+        receipt: { type: string, pattern: "^[a-f0-9]{64}$" }
+    DeletionReceiptInput:
+      type: object
+      additionalProperties: false
+      required: [receipt]
+      properties:
+        receipt: { type: string, pattern: "^[a-f0-9]{64}$" }
+    AccountDeletionStatus:
+      type: object
+      required: [status, message, pendingMedia, authenticationRemoved, applicationDataRemoved]
+      properties:
+        status: { type: string, enum: [pending, complete] }
+        message: { type: string }
+        pendingMedia: { type: integer }
+        authenticationRemoved: { type: boolean }
+        applicationDataRemoved: { type: boolean }
+    AccountSettings:
+      type: object
+      required: [profile, privacy, deletion]
+      properties:
+        profile: { $ref: "#/components/schemas/StillroomProfile" }
+        privacy:
+          type: object
+          required: [publicFields, deletionExplanation]
+          properties:
+            publicFields: { type: array, items: { type: string } }
+            deletionExplanation: { type: string }
+        deletion:
+          oneOf:
+            - { $ref: "#/components/schemas/AccountDeletionStatus" }
+            - type: "null"
     CurationCommand:
       type: object
       additionalProperties: false

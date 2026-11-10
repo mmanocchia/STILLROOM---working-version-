@@ -6,17 +6,27 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './accountDeletionInput';
+export * from './accountDeletionInputConfirmation';
+export * from './accountDeletionStatus';
+export * from './accountDeletionStatusStatus';
+export * from './accountInformationInput';
+export * from './accountSettings';
+export * from './accountSettingsPrivacy';
 export * from './apiFailureResponse';
 export * from './artistCollection';
 export * from './artistCollectionCover';
 export * from './artistCollectionCoverType';
 export * from './boardCuration';
+export * from './checkAccountUsername200';
+export * from './checkAccountUsernameParams';
 export * from './commentPage';
 export * from './completeStillroomUpload200';
 export * from './createStillroomProfile201';
 export * from './curationCommand';
 export * from './curationCommandAction';
 export * from './curationCommandPayload';
+export * from './deletionReceiptInput';
 export * from './getBoardCurationParams';
 export * from './getCurrentUser200';
 export * from './getStillroomBootstrapArtistList';

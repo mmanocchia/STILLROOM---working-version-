@@ -3,6 +3,7 @@ import { appendPublicSnapshot, patchInteraction, PUBLIC_WINDOW_LIMIT } from './p
 import { createProfile, getBootstrap, getComments, getShelves, runAction, uploadFile } from './api.js';
 import { clerk, clerkAppearance, loadClerk } from './clerk.js';
 import { createCuration, parseBoardRoute } from './curation.js';
+import { createSettings } from './settings.js';
 
 const app = document.querySelector('#app');
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
@@ -149,7 +150,32 @@ const curation = createCuration({
   renderPostCard: (post) => renderPostCard(post), getAuthGeneration: () => authGeneration,
 });
 
+const settings = createSettings({
+  escapeHTML, icon, hrefFor, header: (options) => header(options), renderEmpty: (...args) => renderEmpty(...args), activeAccount,
+  getAuthGeneration: () => authGeneration, getRoute: () => state.route,
+  render: () => render(), navigate: (path) => navigate(path),
+  persistAction: (action, payload) => persistAction(action, payload),
+  refreshContent: () => refreshPublicContent({ background: true }),
+  endSession: (destination) => endSession(destination),
+  signOutForDeletion: () => signOutForDeletion(),
+});
+
+async function signOutForDeletion() {
+  // Deletion has been recorded server-side; end this browser session and drop private state.
+  authGeneration += 1;
+  window.sessionStorage.removeItem('stillroom.pendingRole');
+  window.sessionStorage.removeItem('stillroom.intent');
+  clearAccountEditors();
+  state.pendingRole = null;
+  state.activeAccountId = null;
+  state.authUserId = null;
+  navigate('/deletion-status', { replace: true, refresh: false });
+  try { await clerk?.signOut(); } catch { /* The server already revoked access; the status page stays truthful. */ }
+  navigate('/deletion-status', { replace: true, refresh: false });
+}
+
 function clearAccountEditors() {
+  settings.reset();
   state.commentPagination = {};
   state.commentReaders = {};
   state.commentReadErrors = {};
@@ -490,6 +516,7 @@ function navigate(path, { replace = false, refresh = true } = {}) {
   if (replace) history.replaceState({}, '', hrefFor(path));
   else if (getRoute() !== path) history.pushState({}, '', hrefFor(path));
   curation.onRouteChange(state.route, path);
+  settings.onRouteChange(state.route, path);
   state.route = path;
   if (changed) {
     state.contentPage = 0;
@@ -579,7 +606,7 @@ function publicEditorActive() {
     || Object.keys(state.commentReaders).length || state.postEditor || state.boardDraft || state.profileDraft || state.shelfDraft
     || state.postPublishing || state.postMediaLoading || state.boardLoading || state.commentPending
     || state.shelfLoading || state.usernameLoading || state.editingProfile || state.repostPending
-    || state.boardCoverLoading || curation.editorActive()
+    || state.boardCoverLoading || curation.editorActive() || settings.editorActive()
     || document.activeElement?.matches?.('input, textarea, select, [contenteditable="true"]'));
 }
 
@@ -914,6 +941,7 @@ function renderLogin() {
         ${renderAuthNotice()}
         ${state.dataError ? `<p class="inline-error" role="alert">${escapeHTML(state.dataError)}</p>` : ''}
         <div id="clerk-sign-in" class="clerk-auth-container" aria-live="polite"><p class="field-hint">Loading secure sign-in…</p></div>
+        <p class="auth-alternative"><a href="${hrefFor('/recover')}" data-route="/recover" data-testid="link-forgot-password">Forgot password?</a></p>
         <p class="auth-alternative">Don't have an account? <a href="${hrefFor('/register')}" data-route="/register" data-testid="login-sign-up">Sign Up</a></p>
       </section>
     </main>
@@ -2160,6 +2188,7 @@ function renderProfile() {
     ? renderArtistProfileContent(account, true)
     : renderFanProfileContent(account, true);
   return `<section><p class="eyebrow">Your corner</p><h1 class="page-title">Profile</h1><p class="page-subtitle">A profile without a popularity score.</p>
+    <div class="profile-account-controls"><a class="quiet-button" href="${hrefFor('/settings')}" data-route="/settings" data-testid="link-settings">${icon('edit', 14)} Account settings</a></div>
     ${content}
     ${renderProfileSwitcher(account)}
   </section>`;
@@ -2424,6 +2453,20 @@ function render() {
     mountAuthWidget('sign-in', 'clerk-sign-in');
     return;
   }
+  if (state.route === '/recover') {
+    app.innerHTML = settings.renderRecover();
+    settings.afterRender();
+    return;
+  }
+  if (state.route === '/deletion-status') {
+    app.innerHTML = settings.renderDeletionStatus();
+    settings.afterRender();
+    return;
+  }
+  if (state.route === '/settings' && !state.authLoading && !state.dataLoading && !state.activeAccountId) {
+    navigate(state.authUserId ? '/profile/setup' : '/login', { replace: true });
+    return;
+  }
   if (state.route === '/profile/setup') {
     if (!state.authUserId && !state.authLoading) {
       navigate('/login', { replace: true });
@@ -2454,7 +2497,7 @@ function render() {
   const publicProfileRoute = state.route.match(/^\/profile\/([^/]+)$/);
   const shelfEditRoute = state.route.match(/^\/shelves\/([^/]+)\/edit$/);
   const shelfDetailRoute = state.route.match(/^\/shelves\/([^/]+)$/);
-  const specialRoute = ['/artists', '/artists/new', '/artists/edit', '/shelves/new'].includes(state.route)
+  const specialRoute = ['/artists', '/artists/new', '/artists/edit', '/shelves/new', '/settings'].includes(state.route)
     || Boolean(boardRoute) || Boolean(postRoute) || Boolean(publicProfileRoute) || Boolean(shelfEditRoute) || Boolean(shelfDetailRoute);
   if (!navItems.some((item) => item.path === state.route) && !specialRoute) state.route = '/home';
   let content;
@@ -2503,9 +2546,11 @@ function render() {
   }
   else if (state.route === '/shelves') { content = renderShelves(); title = 'My Space'; }
   else if (state.route === '/profile') { content = renderProfile(); title = 'Profile'; }
+  else if (state.route === '/settings') { content = settings.renderSettings(); title = 'Settings'; }
   else { content = renderHome(); title = 'Feed'; }
   app.innerHTML = renderShell(content, title);
   curation.afterRender();
+  if (state.route === '/home') app.querySelector('.page-content')?.insertAdjacentHTML('afterbegin', settings.renderHomeNotice());
   if (state.dataError) {
     const main = app.querySelector('.page-content');
     if (main) {
@@ -3333,6 +3378,7 @@ window.addEventListener('keydown', (event) => {
 
 app?.addEventListener('input', (event) => {
   const target = event.target;
+  if (settings.handleInput(target)) return;
   if (target instanceof HTMLInputElement && ['name', 'username', 'email'].includes(target.name)) {
     state.draft[target.name] = target.value;
   }
@@ -3431,6 +3477,7 @@ app?.addEventListener('change', (event) => {
     queueExploreSearch();
     return;
   }
+  if (settings.handleChange(target)) return;
   if (!(target instanceof HTMLInputElement)) return;
   if (target.matches('input[name="shelfIds"]')) {
     state.shelfPickerSelection = [...app.querySelectorAll('input[name="shelfIds"]:checked')].map((input) => input.value);
@@ -3458,6 +3505,7 @@ app?.addEventListener('submit', (event) => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement)) return;
   event.preventDefault();
+  if (settings.handleSubmit(form)) return;
   if (form.dataset.form === 'profile-setup' && !state.profileSetupLoading) void submitProfileSetup(form);
   else if (form.dataset.form === 'board' && !state.boardLoading && !state.usernameLoading) submitBoard(form);
   else if (form.dataset.form === 'post' && !state.postPublishing) submitPost(form);
@@ -3491,6 +3539,7 @@ app?.addEventListener('click', (event) => {
 
   const action = target.dataset.action;
   if (curation.handleClick(action, target)) return;
+  if (settings.handleClick(action, target, event)) return;
   if (action === 'load-public-more') {
     if (state.contentRefreshing || publicEditorActive() || !state.contentPagination?.nextCursor) return;
     state.contentCursor = state.contentPagination.nextCursor;
@@ -3819,6 +3868,7 @@ window.addEventListener('popstate', () => {
   if (state.boardLoading) cancelBoardOperation();
   if (state.shelfLoading) cancelShelfOperation();
   curation.onRouteChange(state.route, getRoute());
+  settings.onRouteChange(state.route, getRoute());
   state.route = getRoute();
   state.contentPage = 0;
   if (state.route !== '/shelves') {
@@ -3841,7 +3891,7 @@ document.addEventListener('visibilitychange', refreshVisiblePublicContent);
 window.setInterval(refreshVisiblePublicContent, 20000);
 
 const initialSpecialRoute = /^\/(?:board\/[^/]+(?:\/collections\/[^/]+)?|post\/[^/]+|profile\/[^/]+|artists\/(?:new|edit)|shelves\/(?:new|[^/]+(?:\/edit)?))$/.test(state.route);
-if (!navItems.some((item) => item.path === state.route) && state.route !== '/' && state.route !== '/register' && state.route !== '/login' && state.route !== '/confirmation' && !initialSpecialRoute) {
+if (!navItems.some((item) => item.path === state.route) && !['/', '/register', '/login', '/profile/setup', '/confirmation', '/settings', '/recover', '/deletion-status'].includes(state.route) && !initialSpecialRoute) {
   state.route = '/';
   history.replaceState({}, '', hrefFor('/'));
 }
