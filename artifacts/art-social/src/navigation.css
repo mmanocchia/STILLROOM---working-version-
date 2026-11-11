@@ -1,0 +1,102 @@
+/* Stillroom full-width top navigation. Loaded last to override legacy nav rules. */
+.app-shell { padding-top: 0; }
+.app-shell > .app-topnav {
+  position: sticky; top: 0; z-index: 10;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto;
+  align-items: center;
+  gap: clamp(12px, 2vw, 28px);
+  min-height: 76px;
+  padding: 0 clamp(16px, 3vw, 40px);
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, .98);
+}
+.app-shell > .app-topnav > * { min-width: 0; }
+.app-shell .app-topnav-brand { grid-column: 1; grid-row: 1; }
+.app-shell .main-nav {
+  grid-column: 2; grid-row: 1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+  margin: 0; padding: 0; border: 0;
+  overflow: visible;
+}
+.app-shell .main-nav .nav-link {
+  position: relative;
+  display: flex; min-width: 0; min-height: 54px;
+  align-items: center; justify-content: center; gap: 10px;
+  padding: 0 10px;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font: 600 15px/1 'Inter', sans-serif;
+  letter-spacing: .01em;
+  white-space: nowrap;
+  transition: background .18s ease, color .18s ease;
+}
+.app-shell .main-nav .nav-link span { overflow: hidden; text-overflow: ellipsis; }
+.app-shell .main-nav .nav-link .icon { width: 22px; height: 22px; }
+.app-shell .main-nav .nav-link:hover { background: var(--sr-blush); color: var(--ink); }
+.app-shell .main-nav .nav-link[aria-current="page"] { background: #F7E8ED; color: var(--sr-accent-deep); }
+.app-shell .main-nav .nav-link[aria-current="page"] .icon { color: var(--sr-accent); }
+.app-shell .main-nav .nav-link::after { content: none; }
+.app-shell .main-nav .nav-link[aria-current="page"]::after {
+  content: ''; position: absolute; left: 18%; right: 18%; bottom: -11px;
+  height: 3px; border-radius: 3px 3px 0 0; background: var(--sr-accent);
+}
+.app-shell .app-nav-actions { grid-column: 3; grid-row: 1; display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: nowrap; }
+.app-shell .visitor-join-actions { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+.app-shell .join-nav-button { white-space: nowrap; }
+
+/* Narrower desktop: tighten actions, keep labels */
+@media (max-width: 1180px) {
+  .app-shell .main-nav .nav-link { font-size: 14px; gap: 8px; }
+  .app-shell .app-nav-actions .search-label { display: none; }
+}
+
+/* Tablet & mobile: nav drops to its own full-width row */
+@media (max-width: 1180px) {
+  .app-shell > .app-topnav {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 0; padding-top: 10px; min-height: 0;
+  }
+  .app-shell .app-topnav-brand { grid-column: 1; grid-row: 1; }
+  .app-shell .app-nav-actions { grid-column: 2; grid-row: 1; }
+  .app-shell .main-nav { grid-column: 1 / -1; grid-row: 2; gap: 4px; padding: 8px 0 8px; }
+  .app-shell .main-nav .nav-link { min-height: 50px; font-size: 14px; }
+  .app-shell .main-nav .nav-link[aria-current="page"]::after { bottom: -8px; }
+}
+@media (max-width: 640px) {
+  .app-shell > .app-topnav { padding: 8px 10px 0; column-gap: 8px; }
+  .app-shell .brand-name { font-size: 19px; }
+  .app-shell .brand-mark { width: 30px; height: 30px; }
+  .app-shell .main-nav { gap: 2px; padding: 6px 0; }
+  .app-shell .main-nav .nav-link {
+    flex-direction: column; gap: 5px; min-height: 56px; padding: 0 2px;
+    font-size: 11px; border-radius: 10px;
+  }
+  .app-shell .main-nav .nav-link .icon { width: 21px; height: 21px; }
+  .app-shell .main-nav .nav-link[aria-current="page"]::after { bottom: -6px; }
+  .app-shell .app-nav-actions { gap: 2px; }
+  .app-shell .visitor-join-actions { gap: 4px; }
+  .app-shell .join-nav-button { min-height: 32px; padding: 0 8px; font-size: 10px; }
+}
+/* 320-479: auth controls get their own row so nothing overflows */
+@media (max-width: 479px) {
+  /* A classic vertical scrollbar reduces a 320px viewport below the legacy
+     320px document minimum. Let the shell use that actual available width. */
+  html, body { min-width: 0; }
+  .app-shell > .app-topnav { grid-template-columns: minmax(0, 1fr) auto; }
+  .app-shell .app-nav-actions:has(.visitor-join-actions) { display: contents; }
+  .app-shell .app-nav-actions:has(.visitor-join-actions) > .icon-button { grid-column: 2; grid-row: 1; justify-self: end; }
+  .app-shell .visitor-join-actions {
+    grid-column: 1 / -1; grid-row: 2;
+    display: grid; grid-template-columns: auto 1fr 1fr; gap: 4px; padding-top: 8px;
+  }
+  .app-shell .visitor-join-actions .join-nav-button { min-width: 0; padding: 0 6px; font-size: 10px; }
+  .app-shell .app-nav-actions:has(.visitor-join-actions) ~ .main-nav,
+  .app-shell .app-topnav:has(.visitor-join-actions) .main-nav { grid-row: 3; }
+  .app-shell .main-nav .nav-link { font-size: 10.5px; }
+}

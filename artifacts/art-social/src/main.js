@@ -1,5 +1,6 @@
 import './index.css';
 import './profile.css';
+import './navigation.css';
 import { appendPublicSnapshot, patchInteraction, PUBLIC_WINDOW_LIMIT } from './publicContent.js';
 import { createProfile, getBootstrap, getComments, getShelves, runAction, uploadFile } from './api.js';
 import { clerk, clerkAppearance, loadClerk } from './clerk.js';
