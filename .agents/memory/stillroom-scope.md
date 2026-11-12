@@ -26,3 +26,9 @@ Artist Collections are public curation of Fan Posts from that Artist's own Board
 **Why:** The user explicitly requested meaningful Artist curation while retaining Stillroom as a fan-created content platform.
 
 **How to apply:** Keep Artist curation relationships separate from personal Shelf privacy and original post ownership. Preserve Fan attribution and remove unavailable original-post references safely.
+
+Production should start with an empty database, without development test accounts or content.
+
+**Why:** The user explicitly selected production database creation while leaving development-data copying unchecked and accepted an empty production launch.
+
+**How to apply:** Preserve development data. Do not enable development-data copying or production overwrite options. This launch choice does not authorize automatic publishing or unrelated database changes.
