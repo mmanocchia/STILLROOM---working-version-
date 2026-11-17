@@ -53,3 +53,40 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Environment secrets (keep safe example files trackable)
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.*.sample
+.envrc
+
+# Replit Agent metadata that can contain internal asset references
+/.agents/agent_assets_metadata.toml
+
+# Private keys and private-key certificate bundles
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Local database files and exported backups (keep SQL migrations trackable)
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql.gz
+*.bak
+*.backup
+
+# Local credential files
+/secrets.json
+/credentials.json
+**/secrets.local.*
+**/credentials.local.*
+/.aws/credentials
+/.config/gcloud/application_default_credentials.json
